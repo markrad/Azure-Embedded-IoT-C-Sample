@@ -50,3 +50,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# No cmake output
+build/
+
+# No VS Code
+.vscode/
