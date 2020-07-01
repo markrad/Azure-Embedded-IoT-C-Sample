@@ -95,11 +95,6 @@ static az_result read_configuration_entry(
   return AZ_OK;
 }
 
-void signalHandler(int signum) {
-    (void)signum;
-    noctrlc = false;
-}
-
 // Read the user environment variables used to connect to IoT Hub
 static az_result read_configuration_and_init_client(CONFIGURATION *configuration)
 {
@@ -269,6 +264,11 @@ static void url_decode_in_place(char *in)
 
         ++walker;
     }
+}
+
+void signalHandler(int signum) {
+    (void)signum;
+    noctrlc = false;
 }
 
 static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
