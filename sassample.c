@@ -1,13 +1,11 @@
 #include <az_iot_hub_client.h>
-#include <az_iot_common_internal.h>
+#include <az_iot_common.h>
 #include <az_precondition.h>
 #include <az_span.h>
-
-#include <az_span_internal.h>
-#include <az_precondition_internal.h>
-#include <az_log_internal.h>
 #include <az_platform.h>
 #include <az_json.h>
+
+#include <az_precondition_internal.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -49,6 +47,8 @@ typedef struct
 
 
 #define HEAP_LENGTH 1024 * 12
+#define MQTT_SENDBUF_LENGTH 1024
+#define MQTT_RECVBUF_LENGTH 1024
 
 // Global heap pointer
 HEAPHANDLE hHeap = NULL;
@@ -137,7 +137,7 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     return AZ_OK;
 }
 
-static az_result split_connection_string(CONFIGURATION *config)
+static az_result split_connection_string(CONFIGURATION *configuration)
 {
     static const char *HOSTNAME = "hostname";
     static const char *DEVICEID = "deviceid";
@@ -145,14 +145,17 @@ static az_result split_connection_string(CONFIGURATION *config)
 
     char buffer[256];
     bool inKeyword = true;
-    char *walker = az_span_ptr(config->connectionString);
+    char *walker = az_span_ptr(configuration->connectionString);
     char *out = buffer;
     char *valueStart;
     az_span *configPtr;
     az_span work;
-    config->hostname = AZ_SPAN_NULL;
-    config->deviceId = AZ_SPAN_NULL;
-    config->sharedAccessKey = AZ_SPAN_NULL;
+
+    _az_PRECONDITION_NOT_NULL(configuration);
+
+    configuration->hostname = AZ_SPAN_NULL;
+    configuration->deviceId = AZ_SPAN_NULL;
+    configuration->sharedAccessKey = AZ_SPAN_NULL;
 
     while (true)
     {
@@ -160,11 +163,11 @@ static az_result split_connection_string(CONFIGURATION *config)
         {
             *out = '\0';
             if (0 == strcmp(HOSTNAME, buffer))
-                configPtr = &config->hostname;
+                configPtr = &configuration->hostname;
             else if (0 == strcmp(DEVICEID, buffer))
-                configPtr = &config->deviceId;
+                configPtr = &configuration->deviceId;
             else if (0 == strcmp(SHAREDACCESSKEY, buffer))
-                configPtr = &config->sharedAccessKey;
+                configPtr = &configuration->sharedAccessKey;
             else
                 return AZ_ERROR_ARG;
             
@@ -194,12 +197,12 @@ static az_result split_connection_string(CONFIGURATION *config)
         }
     }
 
-    az_heap_free(hHeap, config->connectionString);
-    config->connectionString = AZ_SPAN_NULL;
+    az_heap_free(hHeap, configuration->connectionString);
+    configuration->connectionString = AZ_SPAN_NULL;
 
-    return (az_span_size(config->hostname) != 0 && 
-        az_span_size(config->deviceId) != 0 &&
-        az_span_size(config->sharedAccessKey) != 0)
+    return (az_span_size(configuration->hostname) != 0 && 
+        az_span_size(configuration->deviceId) != 0 &&
+        az_span_size(configuration->sharedAccessKey) != 0)
     ? AZ_OK
     : AZ_ERROR_ARG;
 }
@@ -211,7 +214,9 @@ static void print_array(const char *leader, const char *buffer, int buffer_len)
         printf("%s", leader);
     }
     
-    fwrite(buffer, 1, buffer_len, stdout);
+    if (buffer != NULL && buffer_len > 0)
+        fwrite(buffer, 1, buffer_len, stdout);
+
     putc('\n', stdout);
 }
 
@@ -219,6 +224,9 @@ static void url_decode_in_place(char *in)
 {
     char *walker = in;
     char *mover;
+
+    if (in == NULL)
+        return;
 
     while (*walker)
     {
@@ -265,7 +273,7 @@ static void url_decode_in_place(char *in)
 
 static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    // payload should contain { "value": N } where N is greater than 1
+    // payload should contain { "value": N } where N is greater than 0 and not greater than 120
     az_json_parser json_parser;
     bool error = false;
     az_result result;
@@ -314,7 +322,7 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
         if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
             publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, workArea, sizeof(workArea), &out_topic_length)))
         {
-            char response[] = "{}";
+            char response[] = "{ \"response\": \"error\", \"message\": \"Interval is out of range\" }";
             if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
             {
                 printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
@@ -344,7 +352,20 @@ static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
 
 static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    // payload can be anything and will be printed
+    char workArea[256];
+    size_t out_topic_length;
+
+    printf("%s\n", az_span_ptr(payload));
+
+    if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+        publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, workArea, sizeof(workArea), &out_topic_length)))
+    {
+        char response[] = "{ \"response\": \"success\" }";
+        if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+        {
+            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+        }
+    }
 }
 
 static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
@@ -460,6 +481,10 @@ static az_result getPassword(az_iot_hub_client *client,
 
     uint8_t hashedData[32];
     uint8_t signature_buffer[300];
+
+    _az_PRECONDITION_NOT_NULL(mqtt_password);
+    _az_PRECONDITION_NOT_NULL(mqtt_password_out_length);
+    _az_PRECONDITION_RANGE(50, mqtt_password_length, UINT32_MAX);
 
     rc = AZ_OK;
     az_span signature = az_span_init(signature_buffer, sizeof(signature_buffer));
@@ -627,12 +652,12 @@ int main()
 
     /* setup a client */
     struct mqtt_client mqttclient;
-    uint8_t sendbuf[2048]; /* sendbuf should be large enough to hold multiple whole mqtt messages */
-    uint8_t recvbuf[1024]; /* recvbuf should be large enough any whole mqtt message expected to be received */
+
+    uint8_t *mqtt_buffers = malloc(MQTT_SENDBUF_LENGTH + MQTT_RECVBUF_LENGTH);
 
     PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
 
-    mqtt_init(&mqttclient, &config.ctx, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback);
+    mqtt_init(&mqttclient, &config.ctx, mqtt_buffers, MQTT_SENDBUF_LENGTH, mqtt_buffers + MQTT_SENDBUF_LENGTH, MQTT_RECVBUF_LENGTH, publish_callback);
     mqttclient.publish_response_callback_state = &publish_user;
     mqtt_connect(&mqttclient, client_id, NULL, NULL, 0, user_id, mqtt_password, 0, 400);
     topic_subscribe(&mqttclient);
@@ -715,6 +740,10 @@ int main()
     mqtt_disconnect(&mqttclient);
     mqtt_sync(&mqttclient);
     close_socket(&config.ctx);
+
+    free(heap);
+    free(bearssl_iobuf);
+    free(mqtt_buffers);
 
     return 0;
 }
