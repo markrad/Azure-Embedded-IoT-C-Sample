@@ -31,7 +31,7 @@
 typedef struct 
 {
     az_span connectionString;
-    char *trustedRootCert;
+    az_span trustedRootCert;
     az_span hostname;
     az_span deviceId;
     az_span sharedAccessKey;
@@ -134,13 +134,11 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
         "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, false, configuration->connectionString, &configuration->connectionString));
     configuration->connectionString = az_heap_adjust(hHeap, configuration->connectionString);
 
-    work_span = az_heap_alloc(hHeap, 1024);
-
+    // Not actually large enough to contain the maximum path but should do
+    configuration->trustedRootCert = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, "", false, work_span, &work_span));
-    configuration->trustedRootCert = heapMalloc(hHeap, az_span_size(work_span) + 1);
-    az_span_to_str(configuration->trustedRootCert, az_span_size(work_span) + 1, work_span);
-    az_heap_free(hHeap, work_span);
+        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trustedRootCert, &configuration->trustedRootCert));
+    configuration->trustedRootCert = az_heap_adjust(hHeap, configuration->trustedRootCert);
 
     work_span = az_heap_alloc(hHeap, 10);
 
@@ -599,7 +597,7 @@ int main()
         return rc;
     }
 
-    if (0 == (config.ctx.ta_count = get_trusted_anchors(config.trustedRootCert, &config.ctx.anchOut)))
+    if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trustedRootCert), &config.ctx.anchOut)))
     {
         printf("Trusted root certificate file is invalid\n");
         return 4;
