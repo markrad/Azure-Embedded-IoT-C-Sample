@@ -18,11 +18,14 @@ I avoided using components that have been used in provided samples. I wanted to 
 - MQTT Library: [MQTT-C](https://github.com/LiamBindle/MQTT-C). However, please note that I have an outstanding pull request against that repository to include support for BearSSL. Currently it uses my [fork](https://github.com/markrad/MQTT-C).
 
 ## Building
-This code is currently only designed to run on Linux.
+This code is currently only designed to run on Linux. Briefly you will need to:
 
-1. Download BearSSL, make and install.
-2. Clone MQTT-C and build. Remember where the binaries are because you'll need to hack the CMakeLists.txt to pick it up during the link.
+1. Clone BearSSL, make and copy libbearssl.a and all the headers to a known location.
+2. Clone MQTT-C, cmake, make and copy libmqttc.a and all the headers to a known location.
+3. Clone the Azure SDK for C, cmake, make and copy libraries and headers to a known location
 3. Clone this sample and do a typically cmake build. 
+
+For more detailed build instructions, I have encapsulated this entire process in the dockerfile contained within. This will build all of everything above and can be used as is or as a guide to complete the steps at your console.
 ## Running the Application
 You will need to provide at least two and optionally three environment variables in order to run the application. These are:
 - **AZ_IOT_CONNECTION_STRING** The connection string for the device you wish to connect
