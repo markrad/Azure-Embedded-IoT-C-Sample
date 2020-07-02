@@ -1,6 +1,6 @@
 #pragma once
 
-#include "az_span.h"
+#include <azure/core/az_span.h>
 #include "heap.h"
 
 az_span az_heap_alloc(HEAPHANDLE h, size_t bytes);

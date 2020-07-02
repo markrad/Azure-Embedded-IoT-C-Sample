@@ -1,11 +1,11 @@
-#include <az_iot_hub_client.h>
-#include <az_iot_common.h>
-#include <az_precondition.h>
-#include <az_span.h>
-#include <az_platform.h>
-#include <az_json.h>
+#include <azure/iot/az_iot_hub_client.h>
+#include <azure/iot/az_iot_common.h>
+#include <azure/core/az_precondition.h>
+#include <azure/core/az_span.h>
+#include <azure/core/az_platform.h>
+#include <azure/core/az_json.h>
 
-#include <az_precondition_internal.h>
+#include <azure/core/internal/az_precondition_internal.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -25,6 +25,9 @@
 #include "llcomms.h"
 #include "base64util.h"
 
+/**
+ * Structure used to hold options and other values that are only calculated once
+ */ 
 typedef struct 
 {
     az_span connectionString;
@@ -37,6 +40,9 @@ typedef struct
     uint32_t sas_ttl;
 } CONFIGURATION;
 
+/**
+ * Structure used to pass control blocks to published messages handler along with values that they may modify
+ */
 typedef struct 
 {
     struct mqtt_client *mqttclient;
@@ -50,13 +56,23 @@ typedef struct
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
 
-// Global heap pointer
-HEAPHANDLE hHeap = NULL;
+HEAPHANDLE hHeap = NULL;            /** Global heap pointer */
 
-// Global so signal trap can request graceful termination
-volatile bool noctrlc = true;
 
-// Read OS environment variables using stdlib function
+volatile bool noctrlc = true;       /** Global so signal trap can request graceful termination */
+
+/**
+ * @brief Read option value from environment
+ * 
+ * @param[in] name User friendly name of parameter
+ * @param[in] env_name Name of environment variable
+ * @param[in] default_value Default value environment variable is not found - can be NULL
+ * @param[in] hide_value When true do not log the received value
+ * @param[in,out] buffer Value will be stored in this az_span
+ * @param[out] out_value Value will be stored in this span and the length set - can be the same variable as above
+ * 
+ * @returns az_result of AZ_OK if successful
+ */ 
 static az_result read_configuration_entry(
     const char* name,
     const char* env_name,
@@ -95,7 +111,13 @@ static az_result read_configuration_entry(
   return AZ_OK;
 }
 
-// Read the user environment variables used to connect to IoT Hub
+/**
+ * @brief Populates the configuration variable with the options
+ * 
+ * @param[in,out] configuration Values will be placed in this structure
+ * 
+ * @returns az_result of AZ_OK is successful
+ */
 static az_result read_configuration_and_init_client(CONFIGURATION *configuration)
 {
     static const char* ENV_DEVICE_CONNECTION_STRING = "AZ_IOT_CONNECTION_STRING";
@@ -132,6 +154,13 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     return AZ_OK;
 }
 
+/**
+ * @brief Splits a connection string into its keyword/value components
+ * 
+ * @param[in,out] configuration Takes the connection from here and puts the parts back in
+ * 
+ * @returns az_result of AZ_OK if successful
+ */
 static az_result split_connection_string(CONFIGURATION *configuration)
 {
     static const char *HOSTNAME = "hostname";
@@ -202,6 +231,14 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     : AZ_ERROR_ARG;
 }
 
+/**
+ * @brief Prints a string without a terminating NULL to the console with an
+ * optional leader.
+ * 
+ * @param[in] leader If not NULL will be printed before the array
+ * @param[in] buffer Characters to print
+ * @param[in] buffer_len Number of characters in \p buffer
+ */
 static void print_array(const char *leader, const char *buffer, int buffer_len)
 {
     if (leader != NULL)
@@ -215,6 +252,12 @@ static void print_array(const char *leader, const char *buffer, int buffer_len)
     putc('\n', stdout);
 }
 
+/**
+ * @brief A quick and dirty URL decoder. Decoding is done in place. Only works
+ * with ASCII.
+ * 
+ * @param[in,out] in The string to decode. Result will be placed in here too
+ */
 static void url_decode_in_place(char *in)
 {
     char *walker = in;
@@ -266,6 +309,9 @@ static void url_decode_in_place(char *in)
     }
 }
 
+/**
+ * @brief Used to pass CTRL-C to main thread to allow graceful closure
+ */
 void signalHandler(int signum) {
     (void)signum;
     noctrlc = false;

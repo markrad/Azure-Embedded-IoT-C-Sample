@@ -1,4 +1,4 @@
-#include <az_precondition_internal.h>
+#include <azure/core/internal/az_precondition_internal.h>
 
 #include "base64util.h"
 

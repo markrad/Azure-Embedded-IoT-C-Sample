@@ -1,6 +1,6 @@
 #pragma once
 
-#include <az_span.h>
+#include <azure/core/az_span.h>
 
 /**
  * @brief Decodes the \p source from Base64 to the original string in \p destination
