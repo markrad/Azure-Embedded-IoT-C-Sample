@@ -40,8 +40,6 @@ WORKDIR /build/azure-sdk-for-c
 RUN mkdir /usr/local/include/azure
 RUN cp -r -v sdk/inc/azure/* /usr/local/include/azure
 RUN find . -iname "lib*.a" -exec cp -v {} /usr/local/lib \;
-RUN ls -al /usr/local/include/azure
-RUN ls -al /usr/local/lib
 
 # All required libraries and headers have been copied to /usr/local/lib and /usr/local/include
 
