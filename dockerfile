@@ -48,7 +48,6 @@ RUN ls -al /usr/local/lib
 # Acqure and build the sample
 WORKDIR /build
 RUN git clone https://github.com/markrad/Azure-Embedded-IoT-C-Sample.git
-RUN ls -al
 WORKDIR /build/Azure-Embedded-IoT-C-Sample
 RUN mkdir build
 WORKDIR /build/Azure-Embedded-IoT-C-Sample/build
