@@ -17,6 +17,9 @@
  * @remark Find information about the Embedded C library at https://github.com/azure//azure-sdk-for-c
  * 
  */
+
+#define VERSION "1.0"
+
 #include <azure/iot/az_iot_hub_client.h>
 #include <azure/iot/az_iot_common.h>
 #include <azure/core/az_precondition.h>
@@ -654,6 +657,7 @@ static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
 
 int main()
 {
+    printf("Azure SDK for C IoT device sample using SAS authentication: V%s\n\n", VERSION);
     // All memory required is defined here
     static uint8_t heap[HEAP_LENGTH];                       // Block of memory used by private heap functions
     static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI];      // Buffer for TLS library
