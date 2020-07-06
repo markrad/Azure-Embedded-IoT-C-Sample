@@ -15,7 +15,7 @@ This is a sample application built using the [Azure Embedded C SDK](https://gith
 ## Components
 I avoided using components that have been used in provided samples. I wanted to make this an alternative to those samples in order to gain an appreciation about what it takes to build one of these applications. I choose to use:
 - TLS Library: [BearSSL](https://bearssl.org)
-- MQTT Library: [MQTT-C](https://github.com/LiamBindle/MQTT-C). However, please note that I have an outstanding pull request against that repository to include support for BearSSL. Currently it uses my [fork](https://github.com/markrad/MQTT-C).
+- MQTT Library: [MQTT-C](https://github.com/LiamBindle/MQTT-C). 
 
 ## Building
 This code is currently only designed to run on Linux. Briefly you will need to:
@@ -35,4 +35,3 @@ You will need to provide at least two and optionally three environment variables
 - Add device twin capablilities
 - Add reconnection logic
 - Review and improve error handling
-- Create an easier mechanism to build and run the code.

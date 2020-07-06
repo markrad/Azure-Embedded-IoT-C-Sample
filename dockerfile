@@ -19,7 +19,7 @@ RUN cp -v ./inc/*.h /usr/local/include
 
 # Acquire and build MQTT-C library
 WORKDIR /build
-RUN git clone https://github.com/markrad/MQTT-C.git
+RUN git clone https://github.com/LiamBindle/MQTT-C
 WORKDIR /build/MQTT-C
 RUN mkdir build
 WORKDIR /build/MQTT-C/build
@@ -48,6 +48,7 @@ RUN ls -al /usr/local/lib
 # Acqure and build the sample
 WORKDIR /build
 RUN git clone https://github.com/markrad/Azure-Embedded-IoT-C-Sample.git
+RUN ls -al
 WORKDIR /build/Azure-Embedded-IoT-C-Sample
 RUN mkdir build
 WORKDIR /build/Azure-Embedded-IoT-C-Sample/build

@@ -1,3 +1,22 @@
+/**
+ * @file sassample.c
+ * 
+ * @brief Example of an application that uses the Embedded IoT C library. This example avoids using any of the 
+ * libraries used by the examples in the below GitHub repository. 
+ * 
+ * For MQTT it uses MQTT-C https://github.com/LiamBindle/MQTT-C
+ * For TLS it used BearSSL: https://bearssl.org
+ * 
+ * Currently only supports SAS authentication
+ * 
+ * Application requires at least two and optional three environment variables to be set prior to running:
+ *    AZ_IOT_CONNECTION_STRING:               Set to the device's connection string
+ *    AZ_IOT_DEVICE_X509_TRUST_PEM_FILE:      Path to the file containing the trusted root certificate in order to validate the server's certificate
+ *    AZ_IOT_DEVICE_SAS_TTL:                  Optional time to live in seconds for SAS token - defaults to 3600 seconds
+ * 
+ * @remark Find information about the Embedded C library at https://github.com/azure//azure-sdk-for-c
+ * 
+ */
 #include <azure/iot/az_iot_hub_client.h>
 #include <azure/iot/az_iot_common.h>
 #include <azure/core/az_precondition.h>
@@ -51,7 +70,7 @@ typedef struct
     bool run;
 } PUBLISH_USER;
 
-
+// Buffer size constants
 #define HEAP_LENGTH 1024 * 12
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
@@ -131,7 +150,7 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     configuration->connectionString = az_heap_alloc(hHeap, 256);
 
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, false, configuration->connectionString, &configuration->connectionString));
+        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, true, configuration->connectionString, &configuration->connectionString));
     configuration->connectionString = az_heap_adjust(hHeap, configuration->connectionString);
 
     // Not actually large enough to contain the maximum path but should do
@@ -155,7 +174,7 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
 /**
  * @brief Splits a connection string into its keyword/value components
  * 
- * @param[in,out] configuration Takes the connection from here and puts the parts back in
+ * @param[in,out] configuration Takes the connection string from here and puts the parts back in
  * 
  * @returns az_result of AZ_OK if successful
  */
@@ -311,13 +330,20 @@ static void url_decode_in_place(char *in)
  * @brief Used to pass CTRL-C to main thread to allow graceful closure
  */
 void signalHandler(int signum) {
-    (void)signum;
+    (void)signum;       // Will always be SIGINT
     noctrlc = false;
 }
 
+/**
+ * @brief Called to process interval direct method. Will modify the interval that telemetry is sent at if the payload is valid.
+ * Payload should be in the format { "value": N } where N is greater than 0 and less than or equal to 120.
+ * 
+ * @param[in] publish_user: Passed via the user word. Contains interval value to update
+ * @param[in] method_request: Method name and request id
+ * @param[in] payload: Data sent by client
+ */
 static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    // payload should contain { "value": N } where N is greater than 0 and not greater than 120
     az_json_parser json_parser;
     bool error = false;
     az_result result;
@@ -375,6 +401,13 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
     }
 }
 
+/**
+ * @brief Called to process kill direct method. Ends the program
+ * 
+ * @param[in] publish_user: Passed via the user word. Contains terminate flag
+ * @param[in] method_request: Method name and request id
+ * @param[in] payload: Data sent by client (ignored)
+ */
 static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
     // payload should be null as in {} - not going to bother checking it
@@ -394,6 +427,13 @@ static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
     }
 }
 
+/**
+ * @brief Called to process test direct method. Just prints the payload
+ * 
+ * @param[in] publish_user: Passed via the user word (ignored)
+ * @param[in] method_request: Method name and request id
+ * @param[in] payload: Data sent by client - just prints this
+ */
 static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
     char workArea[256];
@@ -412,6 +452,13 @@ static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
     }
 }
 
+/**
+ * @brief Called to process an unrecognized command - returns an error to the hub.
+ * 
+ * @param[in] publish_user: Passed via the user word
+ * @param[in] method_request: Method name and request id
+ * @param[in] payload: Data sent by client
+ */
 static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
     char workArea[256];
@@ -428,6 +475,15 @@ static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_
     }
 }
 
+/**
+ * @brief This function is called whenever a message is publish on any of the subscribed topics. It will figure out if this is a
+ * C2D message or a direct method. The former just prints the message whereas the latter will call the appropriate function if the
+ * command is recognized or the unknown to return an error.
+ * 
+ * @param[in] publish_user: Address of user word passed. Contains interval value to update
+ * @param[in] method_request: Method name and request id
+ * @param[in] payload: Data sent by client
+ */
 static void publish_callback(void** state, struct mqtt_response_publish *published) 
 {
     PUBLISH_USER *publish_user = (PUBLISH_USER *)(*state);
@@ -511,6 +567,18 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     }
 }
 
+/**
+ * @brief Generates the SAS key to connect to the IoT hub
+ * 
+ * @param[in] client: The IoT client data block
+ * @param[in] decodedSAK: Shared access key decoded from Base64
+ * @param[in] expiryTime: Number of seconds for SAS token TTL - must be greater than 50
+ * @param[out] mqtt_password: Buffer for password
+ * @param[in] mqtt_password_length: Length of password buffer
+ * @param[out] mqtt_password_out_length: Length of returned password
+ *
+ * @returns AZ_OK if successful
+ */
 static az_result getPassword(az_iot_hub_client *client, 
         az_span decodedSAK, 
         long expiryTime, 
@@ -568,6 +636,13 @@ static az_result getPassword(az_iot_hub_client *client,
     return rc;
 }
 
+/**
+ * @brief Subscribes to IoT hub topics for C2D and direct methods
+ * 
+ * @param[in] mqttclient: The MQTT client data block
+ * 
+ * @returns MQTTErrors: Any error that occured during subscribe or MQTT_OK
+ */
 static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
 {
     mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_METHODS_SUBSCRIBE_TOPIC, 0);
@@ -579,30 +654,33 @@ static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
 
 int main()
 {
+    // All memory required is defined here
+    static uint8_t heap[HEAP_LENGTH];                       // Block of memory used by private heap functions
+    static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI];      // Buffer for TLS library
+    static uint8_t mqtt_sendbuf[2048];                      // Send buffer for MQTT library
+    static uint8_t mqtt_recvbuf[1024];                      // Receive buffer for MQTT library
+
     CONFIGURATION config;
     int rc;
-    uint8_t *heap = malloc(HEAP_LENGTH);
 
-    if (heap == NULL)
-    {
-        printf("Failed to allocate heap\n");
-        return 4;
-    }
-
+    // Initialize private heap
     hHeap = heapInit(heap, HEAP_LENGTH);
 
+    // Read the configuration from the environment
     if (az_failed(rc = read_configuration_and_init_client(&config)))
     {
         printf("Failed to read configuration variables - %d\n", rc);
         return rc;
     }
 
+    // Convert the certificate into something BearSSL understands
     if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trustedRootCert), &config.ctx.anchOut)))
     {
         printf("Trusted root certificate file is invalid\n");
         return 4;
     }
 
+    // Parse the connection string
     if (az_failed(rc = split_connection_string(&config)))
     {
         printf("Failed to parse connection string - make sure it is a device connection string - %d\n", rc);
@@ -612,6 +690,7 @@ int main()
     az_iot_hub_client client;
     az_iot_hub_client_options options = az_iot_hub_client_options_default();
 
+    // Initialize the embedded IoT data block
     if (AZ_OK != (rc = az_iot_hub_client_init(&client, config.hostname, config.deviceId, &options)))
     {
         printf("Failed to initialize client - %d\n", rc);
@@ -621,6 +700,7 @@ int main()
     size_t outLength;
     char *client_id = heapMalloc(hHeap, 200);
 
+    // Get the MQTT client
     if (AZ_OK != (rc = az_iot_hub_client_get_client_id(&client, client_id, 200, &outLength)))
     { 
         printf("Failed to acquire MQTT client id - %d\n", rc);
@@ -632,6 +712,7 @@ int main()
     size_t user_id_length = 300;
     char *user_id = heapMalloc(hHeap, user_id_length);
 
+    // Get the MQTT user name
     if (AZ_OK != (rc = az_iot_hub_client_get_user_name(&client, user_id, user_id_length, &user_id_length)))
     { 
         printf("Failed to acquire MQTT user id - %d\n", rc);
@@ -645,6 +726,7 @@ int main()
     char *mqtt_password = heapMalloc(hHeap, mqtt_password_length);
 
     config.decodedSAK = az_heap_alloc(hHeap, 256);
+
     if (AZ_OK != (rc = az_decode_base64(config.sharedAccessKey, config.decodedSAK, &config.decodedSAK)))
     {
         printf("Failed to decode the shared access key: %d\n", rc);
@@ -653,6 +735,7 @@ int main()
 
     config.decodedSAK = az_heap_adjust(hHeap, config.decodedSAK);
 
+    // Get the MQTT password
     if (AZ_OK != (rc = getPassword(&client, config.decodedSAK, expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
     {
         printf("Failed to generate MQTT password: %d\n", rc);
@@ -663,8 +746,8 @@ int main()
 
     printf("\nMQTT connection details:\n");
     printf("\tClient Id: %s\n", client_id);
-    printf("\tUser Id: %s\n", user_id);
-    printf("\tPassword: %s\n", mqtt_password);
+    printf("\t  User Id: %s\n", user_id);
+    printf("\t Password: %s\n", mqtt_password);
 
     size_t mqtt_topic_length = 100;
     char *mqtt_topic = heapMalloc(hHeap, mqtt_topic_length);
@@ -678,15 +761,12 @@ int main()
     mqtt_topic = heapRealloc(hHeap, mqtt_topic, mqtt_topic_length + 1);
     printf("\tTopic: %s\n", mqtt_topic);
 
-    /* open the non-blocking TCP socket (connecting to the broker) */
-    
+    // open the non-blocking TCP socket (connecting to the broker)
     signal(SIGPIPE, SIG_IGN);
 
     char *hostname = heapMalloc(hHeap, az_span_size(config.hostname) + 1);
 
     az_span_to_str(hostname, az_span_size(config.hostname) + 1, config.hostname);
-
-    unsigned char *bearssl_iobuf = malloc(BR_SSL_BUFSIZE_BIDI);
 
     if (0 != open_nb_socket(&config.ctx, hostname, "8883", bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
     {
@@ -694,19 +774,17 @@ int main()
         return 4;
     }
 
-    /* setup a client */
+    // Setup the client 
     struct mqtt_client mqttclient;
-
-    uint8_t *mqtt_buffers = malloc(MQTT_SENDBUF_LENGTH + MQTT_RECVBUF_LENGTH);
 
     PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
 
-    mqtt_init(&mqttclient, &config.ctx, mqtt_buffers, MQTT_SENDBUF_LENGTH, mqtt_buffers + MQTT_SENDBUF_LENGTH, MQTT_RECVBUF_LENGTH, publish_callback);
+    mqtt_init(&mqttclient, &config.ctx, mqtt_sendbuf, MQTT_SENDBUF_LENGTH, mqtt_recvbuf, MQTT_RECVBUF_LENGTH, publish_callback);
     mqttclient.publish_response_callback_state = &publish_user;
     mqtt_connect(&mqttclient, client_id, NULL, NULL, 0, user_id, mqtt_password, 0, 400);
     topic_subscribe(&mqttclient);
 
-    /* check that we don't have any errors */
+    // Check for any errors
     if (mqttclient.error != MQTT_OK) {
         printf("error: %s\n", mqtt_error_str(mqttclient.error));
         return -4;
@@ -720,8 +798,10 @@ int main()
 
     printf("\nSending telemtry - press CTRL-C to exit\n\n");
 
+    // Start sending data
     while (publish_user.run && noctrlc)
     {
+        // Check for SAS token about to expire and refresh
         if (expiryTime - time(NULL) < (config.sas_ttl * 80 / 100))
         {
             // Need to regenerate a SAS token
@@ -757,14 +837,10 @@ int main()
                 return 4;
             }
         }
-        if (MQTT_OK != mqtt_sync(&mqttclient) || mqttclient.error != MQTT_OK)
-        {
-            printf("error: %s\n", mqtt_error_str(mqttclient.error));
-            return -4;
-        }
 
         if (++counter % (publish_user.interval * 10) == 0) 
         {
+            // Send some telemetry
             counter = 0;
             sprintf(msg, "{ \"message\": %d }", msgNumber++);
             printf("Sending %s\n", msg);
@@ -776,6 +852,13 @@ int main()
             }
         }
 
+        // Push and pull the data
+        if (MQTT_OK != mqtt_sync(&mqttclient) || mqttclient.error != MQTT_OK)
+        {
+            printf("error: %s\n", mqtt_error_str(mqttclient.error));
+            return -4;
+        }
+
         az_platform_sleep_msec(100);
     }
 
@@ -784,10 +867,6 @@ int main()
     mqtt_disconnect(&mqttclient);
     mqtt_sync(&mqttclient);
     close_socket(&config.ctx);
-
-    free(heap);
-    free(bearssl_iobuf);
-    free(mqtt_buffers);
 
     return 0;
 }
