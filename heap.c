@@ -30,17 +30,17 @@ typedef struct _HEAPHANDLE
 	MEMORYBLOCKSTRUCT usedList;
 } HHEAPSTRUCT, * HHEAP;
 
-MEMORYBLOCK heapGetFreeList(HEAPHANDLE hHeap);
-MEMORYBLOCK heapGetUsedList(HEAPHANDLE hHeap);
-uint16_t heapGetOffset(HEAPHANDLE hHeap, MEMORYBLOCK mb);
-MEMORYBLOCK heapGetNextAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
-MEMORYBLOCK heapGetPreviousAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
-MEMORYBLOCK heapGetMB(uint8_t* address);
-uint8_t* heapGetData(MEMORYBLOCK mb);
-void heapInsertIntoFreeList(HEAPHANDLE hHead, MEMORYBLOCK mb);
-void heapInsertAfter(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem);
-void heapRemoveFromList(HEAPHANDLE hHeap, MEMORYBLOCK mb);
-int heapGetIsAdjacent(MEMORYBLOCK first, MEMORYBLOCK second);
+static MEMORYBLOCK heapGetFreeList(HEAPHANDLE hHeap);
+static MEMORYBLOCK heapGetUsedList(HEAPHANDLE hHeap);
+static uint16_t heapGetOffset(HEAPHANDLE hHeap, MEMORYBLOCK mb);
+static MEMORYBLOCK heapGetNextAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static MEMORYBLOCK heapGetPreviousAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static MEMORYBLOCK heapGetMB(uint8_t* address);
+static uint8_t* heapGetData(MEMORYBLOCK mb);
+static void heapInsertIntoFreeList(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static void heapInsertAfter(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem);
+static void heapRemoveFromList(HEAPHANDLE hHeap, MEMORYBLOCK mb);
+static int heapGetIsAdjacent(MEMORYBLOCK first, MEMORYBLOCK second);
 static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 
@@ -471,7 +471,7 @@ int heapCheck(HEAPHANDLE hHeap)
 	{
 		if (++cnt > h->freeList.length)
 		{
-			printf("heap is broken - used list counts do not agree\n");
+			printf("heap is broken - free list counts do not agree\n");
 			return 1;
 		}
 	}
