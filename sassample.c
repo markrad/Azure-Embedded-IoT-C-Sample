@@ -593,18 +593,20 @@ static az_result getPassword(az_iot_hub_client *client,
     br_sha256_context sha256_context;
     br_hmac_key_context hmac_key_context;
     br_hmac_context hmac_context;
-
-    uint8_t hashedData[32];
+    uint8_t hashedData_buffer[32];
+    uint8_t encoded_data_buffer[(sizeof(hashedData_buffer) + 3) * 4 / 3];
     uint8_t signature_buffer[300];
+    az_span signature_span = AZ_SPAN_FROM_BUFFER(signature_buffer);
+    az_span hashedData_span = AZ_SPAN_FROM_BUFFER(hashedData_buffer);
+    az_span encoded_data_span = AZ_SPAN_FROM_BUFFER(encoded_data_buffer);
 
     _az_PRECONDITION_NOT_NULL(mqtt_password);
     _az_PRECONDITION_NOT_NULL(mqtt_password_out_length);
     _az_PRECONDITION_RANGE(50, mqtt_password_length, UINT32_MAX);
 
     rc = AZ_OK;
-    az_span signature = az_span_init(signature_buffer, sizeof(signature_buffer));
 
-    if (AZ_OK != (rc = az_iot_hub_client_sas_get_signature(client, expiryTime, signature, &signature)))
+    if (AZ_OK != (rc = az_iot_hub_client_sas_get_signature(client, expiryTime, signature_span, &signature_span)))
     {
         printf("Failed to get string to sign for password - %d\n", rc);
         return rc;
@@ -613,18 +615,15 @@ static az_result getPassword(az_iot_hub_client *client,
     br_sha256_init(&sha256_context);
     br_hmac_key_init(&hmac_key_context, sha256_context.vtable, az_span_ptr(decodedSAK), az_span_size(decodedSAK));
     br_hmac_init(&hmac_context, &hmac_key_context, 0);
-    br_hmac_update(&hmac_context, az_span_ptr(signature), az_span_size(signature));
-    br_hmac_out(&hmac_context, hashedData);
+    br_hmac_update(&hmac_context, az_span_ptr(signature_span), az_span_size(signature_span));
+    br_hmac_out(&hmac_context, az_span_ptr(hashedData_span));
 
-    az_span hashedData_span = az_span_init(hashedData, sizeof(hashedData));
-    az_span hashedEncoded = az_heap_alloc(hHeap, (sizeof(hashedData) + 3) * 4 / 3);
-
-    if (AZ_OK != (rc = az_encode_base64(hashedData_span, hashedEncoded, &hashedEncoded)))
+    if (AZ_OK != (rc = az_encode_base64(hashedData_span, encoded_data_span, &encoded_data_span)))
     {
         printf("Failed to Base64 encode the hash key: %d\n", rc);
     }
     else if (AZ_OK != (rc = az_iot_hub_client_sas_get_password(client, 
-            hashedEncoded, 
+            encoded_data_span, 
             expiryTime, 
             AZ_SPAN_NULL, 
             mqtt_password, 
@@ -633,8 +632,6 @@ static az_result getPassword(az_iot_hub_client *client,
     {
         printf("Failed to generate password string: %d\n", rc);
     }
-
-    az_heap_free(hHeap, hashedEncoded);
 
     return rc;
 }
