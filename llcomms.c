@@ -67,7 +67,7 @@ static int host_connect(const char *host, const char *port) {
     if (NULL == (he = gethostbyname(host)))
     {
         fprintf(stderr, "Failed to resolve host name\n");
-        return -1;
+        return -2;
     }
 
     addr_list = (struct in_addr **) he->h_addr_list;
@@ -77,7 +77,7 @@ static int host_connect(const char *host, const char *port) {
     int i;
 
     if (-1 == (sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)))
-        return -1;
+        return -2;
 
     struct sockaddr_in server;
 
@@ -113,13 +113,13 @@ int open_nb_socket(bearssl_context *ctx,
                     unsigned char *bearssl_iobuf,
                     size_t bearssl_iobuf_len) {
 
+    if (0 >= (ctx->fd = host_connect(hostname, port)))
+        return ctx->fd;
+
     /* initialize the BearSSL engine */
     br_ssl_client_init_full(&ctx->sc, &ctx->xc, ctx->anchOut, ctx->ta_count);
 	br_ssl_engine_set_buffer(&ctx->sc.eng, bearssl_iobuf, bearssl_iobuf_len, 1);
 	br_ssl_client_reset(&ctx->sc, hostname, 0);
-
-    if (-1 == (ctx->fd = host_connect(hostname, port)))
-        return -1;
 
     ctx->low_read = sock_read;
     ctx->low_write = sock_write;
