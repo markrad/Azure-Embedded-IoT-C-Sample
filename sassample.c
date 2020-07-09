@@ -710,6 +710,11 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     topic_subscribe(mqtt_client);
     mqtt_sync(mqtt_client);
 
+    if (mqtt_client->error != MQTT_OK)
+    {
+        printf("Failed to connect to MQTT broker: %s\n", mqtt_error_str(mqtt_client->error));
+    }
+
     return mqtt_client->error == MQTT_OK? 0 : -2;
 }
 
@@ -831,7 +836,6 @@ int main()
 
     if (0 != (rc = server_connect(&config, &client, &mqttclient, false, &expiryTime)))
     {
-        printf("Unable to connect (needs a better message)\n");
         return -4;
     }
 
@@ -853,7 +857,6 @@ int main()
             printf("Reaunthenticating\n");
             if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &expiryTime)))
             {
-                printf("Connection failed (TODO)\n");
                 return -4;
             }
         }
@@ -865,18 +868,26 @@ int main()
             sprintf(msg, "{ \"message\": %d }", msgNumber++);
             printf("Sending %s\n", msg);
             mqtt_publish(&mqttclient, mqtt_topic, msg, strlen(msg), MQTT_PUBLISH_QOS_0);
-
-            if (mqttclient.error != MQTT_OK) {
-                printf("error: %s\n", mqtt_error_str(mqttclient.error));
-                return -4;
-            }
         }
 
         // Push and pull the data
-        if (MQTT_OK != mqtt_sync(&mqttclient) || mqttclient.error != MQTT_OK)
+        mqtt_sync(&mqttclient);
+
+        if (mqttclient.error != MQTT_OK)
         {
-            printf("error: %s\n", mqtt_error_str(mqttclient.error));
-            return -4;
+            if (mqttclient.error == MQTT_ERROR_SOCKET_ERROR)
+            {
+                printf("Connection failed - retrying\n");
+
+                if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &expiryTime)))
+                {
+                    return -4;
+                }
+            }
+            else
+            {
+                printf("Unrecoverable MQTT error: %s\n", mqtt_error_str(mqttclient.error));
+            }
         }
 
         az_platform_sleep_msec(100);
