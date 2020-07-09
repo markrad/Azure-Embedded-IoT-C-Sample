@@ -6,11 +6,11 @@ This is a sample application built using the [Azure Embedded C SDK](https://gith
 - Send Telemetry to the IoT hub
 - Receive C2D messages from the IoT hub (but just prints them out)
 - Receive and action two device methods :- interval and kill
+- Reconnection logic
 
 ## Not Implemented
 - No support for device twins
-- Reconnection logic is missing
-- Error handling probably leaves something to be desired
+- Error handling probably leaves something to be desired (but is getting better)
 
 ## Components
 I avoided using components that have been used in provided samples. I wanted to make this an alternative to those samples in order to gain an appreciation about what it takes to build one of these applications. I choose to use:
@@ -23,9 +23,9 @@ This code is currently only designed to run on Linux. Briefly you will need to:
 1. Clone BearSSL, make and copy libbearssl.a and all the headers to a known location.
 2. Clone MQTT-C, cmake, make and copy libmqttc.a and all the headers to a known location.
 3. Clone the Azure SDK for C, cmake, make and copy libraries and headers to a known location
-3. Clone this sample and do a typically cmake build. 
+3. Clone this sample and do a typicall cmake build. 
 
-For more detailed build instructions, I have encapsulated this entire process in the dockerfile contained within. This will build all of everything above and can be used as is or as a guide to complete the steps at your console.
+For more detailed build instructions, you will find the entire process encapsulated in the dockerfile contained within. This will build everything above and can be used as is or as a guide to complete the steps at your console.
 ## Running the Application
 You will need to provide at least two and optionally three environment variables in order to run the application. These are:
 - **AZ_IOT_CONNECTION_STRING** The connection string for the device you wish to connect
@@ -33,5 +33,4 @@ You will need to provide at least two and optionally three environment variables
 - **AZ_IOT_DEVICE_SAS_TTL** Optionally the SAS token time to live value in seconds. This will default to 3600 if omitted.
 ## To do
 - Add device twin capablilities
-- Add reconnection logic
 - Review and improve error handling

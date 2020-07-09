@@ -658,6 +658,17 @@ static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
     return mqttclient->error;
 }
 
+/**
+ * @brief Connect to the server and start the MQTT session
+ * 
+ * @param[in] config: Control block with preacquired unchanging values
+ * @param[in] client: azure iot hub client
+ * @param[in] mqtt_client: MQTT client control block
+ * @param[in] reconnect: When true will close MQTT and disconnect the socket first
+ * @param[out] expiryTime: Returns the moment that the generated SAS key will expire
+ * 
+ * @returns 0 = success, -1 = socket failure, -2 = MQTT failure
+ */ 
 static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime)
 {
     int64_t start;
@@ -700,7 +711,7 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
     {
         printf("Failed to generate MQTT password: %d\n", rc);
-        return 4;
+        return -1;
     }
 
     mqtt_password = heapRealloc(hHeap, mqtt_password, mqtt_password_length + 1);
@@ -718,6 +729,9 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     return mqtt_client->error == MQTT_OK? 0 : -2;
 }
 
+/**
+ * @brief Entry point of Azure SDK for C sample - sends a message at a fixed interval to an IoT hub
+ */
 int main()
 {
     printf("Azure SDK for C IoT device sample using SAS authentication: V%s\n\n", VERSION);
