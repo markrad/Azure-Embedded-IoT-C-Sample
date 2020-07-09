@@ -2,9 +2,8 @@
 
 #include <mqtt_pal.h>
 
-int open_nb_socket(bearssl_context *ctx,
-                    const char *hostname,
-                    const char *port,
-                    unsigned char *bearssl_iobuf,
-                    size_t bearssl_iobuf_len);
+void initialize_TLS(bearssl_context *ctx, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len);
+
+int open_nb_socket(bearssl_context *ctx, const char *hostname, const char *port);
+                    
 int close_socket(bearssl_context *ctx);

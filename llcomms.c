@@ -107,6 +107,15 @@ static int host_connect(const char *host, const char *port) {
     return sockfd;
 }
 
+void initialize_TLS(bearssl_context *ctx, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len)
+{
+    br_ssl_client_init_full(&ctx->sc, &ctx->xc, ctx->anchOut, ctx->ta_count);
+	br_ssl_engine_set_buffer(&ctx->sc.eng, bearssl_iobuf, bearssl_iobuf_len, 1);
+
+    ctx->low_read = sock_read;
+    ctx->low_write = sock_write;
+}
+
 int open_nb_socket(bearssl_context *ctx,
                     const char *hostname,
                     const char *port,
@@ -116,13 +125,8 @@ int open_nb_socket(bearssl_context *ctx,
     if (0 >= (ctx->fd = host_connect(hostname, port)))
         return ctx->fd;
 
-    /* initialize the BearSSL engine */
-    br_ssl_client_init_full(&ctx->sc, &ctx->xc, ctx->anchOut, ctx->ta_count);
-	br_ssl_engine_set_buffer(&ctx->sc.eng, bearssl_iobuf, bearssl_iobuf_len, 1);
+    /* reset the BearSSL engine */
 	br_ssl_client_reset(&ctx->sc, hostname, 0);
-
-    ctx->low_read = sock_read;
-    ctx->low_write = sock_write;
 
     return 0;
 }

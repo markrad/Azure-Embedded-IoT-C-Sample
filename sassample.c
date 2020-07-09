@@ -55,9 +55,12 @@ typedef struct
     az_span connectionString;
     az_span trustedRootCert;
     az_span hostname;
+    az_span port;
     az_span deviceId;
     az_span sharedAccessKey;
     az_span decodedSAK;
+    char *client_id;
+    char *user_id;
     bearssl_context ctx;
     uint32_t sas_ttl;
 } CONFIGURATION;
@@ -167,11 +170,10 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     AZ_RETURN_IF_FAILED(read_configuration_entry(
         "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span));
 
-    work_span = az_span_slice(work_span, 0, az_span_size(work_span) - 1);
-    AZ_RETURN_IF_FAILED(az_span_atou32(work_span, &configuration->sas_ttl));
+    az_result ar = az_span_atou32(az_span_slice(work_span, 0, az_span_size(work_span) - 1), &configuration->sas_ttl);
     az_heap_free(hHeap, work_span);
 
-    return AZ_OK;
+    return ar;
 }
 
 /**
@@ -187,6 +189,8 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     static const char *DEVICEID = "deviceid";
     static const char *SHAREDACCESSKEY = "sharedaccesskey";
 
+    static const char PORT[] = "8883";
+
     char buffer[256];
     bool inKeyword = true;
     char *walker = az_span_ptr(configuration->connectionString);
@@ -198,6 +202,7 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     _az_PRECONDITION_NOT_NULL(configuration);
 
     configuration->hostname = AZ_SPAN_NULL;
+    configuration->port = AZ_SPAN_NULL;
     configuration->deviceId = AZ_SPAN_NULL;
     configuration->sharedAccessKey = AZ_SPAN_NULL;
 
@@ -243,6 +248,7 @@ static az_result split_connection_string(CONFIGURATION *configuration)
 
     az_heap_free(hHeap, configuration->connectionString);
     configuration->connectionString = AZ_SPAN_NULL;
+    configuration->port = az_span_init((uint8_t *)PORT, strlen(PORT));
 
     return (az_span_size(configuration->hostname) != 0 && 
         az_span_size(configuration->deviceId) != 0 &&
@@ -652,6 +658,61 @@ static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
     return mqttclient->error;
 }
 
+static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime)
+{
+    int64_t start;
+    int attempt = 0;
+    int rc = -1;
+
+    if (reconnect)
+    {
+        printf("Disconnected\n");
+        mqtt_disconnect(mqtt_client);
+        mqtt_sync(mqtt_client);
+        close_socket(&config->ctx);
+    }
+
+    while (rc != 0)
+    {
+        start = az_platform_clock_msec();
+        printf("Connection attempt %d\n", attempt + 1);
+
+        if (0 != (rc = open_nb_socket(&config->ctx, az_span_ptr(config->hostname), az_span_ptr(config->port))))
+        {
+            if (rc == -1)
+            {
+                az_platform_sleep_msec(az_iot_retry_calc_delay((int)(az_platform_clock_msec() - start), ++attempt, 1000, 20 * 60 * 1000, (rand() % 5000)));
+            }
+            else
+            {
+                // Unrecoverable error
+                printf("Unable to open socket: Unrecoverable error\n");
+                return -1;
+            }
+        }
+    }
+
+    // Get the MQTT password
+    *expiryTime = time(NULL) + config->sas_ttl;
+    size_t mqtt_password_length = 256;
+    char *mqtt_password = heapMalloc(hHeap, mqtt_password_length);
+
+    if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+    {
+        printf("Failed to generate MQTT password: %d\n", rc);
+        return 4;
+    }
+
+    mqtt_password = heapRealloc(hHeap, mqtt_password, mqtt_password_length + 1);
+
+    // Code just assumes MQTT connect will be ok if socker it connected - failure is considered terminal
+    mqtt_connect(mqtt_client, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
+    topic_subscribe(mqtt_client);
+    mqtt_sync(mqtt_client);
+
+    return mqtt_client->error == MQTT_OK? 0 : -2;
+}
+
 int main()
 {
     printf("Azure SDK for C IoT device sample using SAS authentication: V%s\n\n", VERSION);
@@ -699,33 +760,32 @@ int main()
     }
 
     size_t outLength;
-    char *client_id = heapMalloc(hHeap, 200);
 
-    // Get the MQTT client
-    if (AZ_OK != (rc = az_iot_hub_client_get_client_id(&client, client_id, 200, &outLength)))
+    // Get the MQTT client id
+    outLength = 200;
+    config.client_id = heapMalloc(hHeap, outLength);
+
+    if (AZ_OK != (rc = az_iot_hub_client_get_client_id(&client, config.client_id, outLength, &outLength)))
     { 
         printf("Failed to acquire MQTT client id - %d\n", rc);
         return rc;
     }
 
-    client_id = heapRealloc(hHeap, client_id, outLength + 1);
-
-    size_t user_id_length = 300;
-    char *user_id = heapMalloc(hHeap, user_id_length);
+    config.client_id = heapRealloc(hHeap, config.client_id, outLength + 1);
 
     // Get the MQTT user name
-    if (AZ_OK != (rc = az_iot_hub_client_get_user_name(&client, user_id, user_id_length, &user_id_length)))
+    outLength = 300;
+    config.user_id = heapMalloc(hHeap, outLength);
+
+    if (AZ_OK != (rc = az_iot_hub_client_get_user_name(&client, config.user_id, outLength, &outLength)))
     { 
         printf("Failed to acquire MQTT user id - %d\n", rc);
         return rc; 
     }
 
-    user_id = heapRealloc(hHeap, user_id, user_id_length + 1);
+    config.user_id = heapRealloc(hHeap, config.user_id, outLength + 1);
 
-    long expiryTime = time(NULL) + config.sas_ttl;
-    size_t mqtt_password_length = 256;
-    char *mqtt_password = heapMalloc(hHeap, mqtt_password_length);
-
+    // Decode the SAS key
     config.decodedSAK = az_heap_alloc(hHeap, 256);
 
     if (AZ_OK != (rc = az_decode_base64(config.sharedAccessKey, config.decodedSAK, &config.decodedSAK)))
@@ -736,58 +796,42 @@ int main()
 
     config.decodedSAK = az_heap_adjust(hHeap, config.decodedSAK);
 
-    // Get the MQTT password
-    if (AZ_OK != (rc = getPassword(&client, config.decodedSAK, expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
-    {
-        printf("Failed to generate MQTT password: %d\n", rc);
-        return 4;
-    }
-
-    mqtt_password = heapRealloc(hHeap, mqtt_password, mqtt_password_length + 1);
-
     printf("\nMQTT connection details:\n");
-    printf("\tClient Id: %s\n", client_id);
-    printf("\t  User Id: %s\n", user_id);
-    printf("\t Password: %s\n", mqtt_password);
+    printf("\tClient Id: %s\n", config.client_id);
+    printf("\t  User Id: %s\n", config.user_id);
 
-    size_t mqtt_topic_length = 100;
-    char *mqtt_topic = heapMalloc(hHeap, mqtt_topic_length);
+    // Get the MQTT publish topic
+    outLength = 100;
+    char *mqtt_topic = heapMalloc(hHeap, outLength);
 
-    if (AZ_OK != (rc = az_iot_hub_client_telemetry_get_publish_topic(&client, NULL, mqtt_topic, mqtt_password_length, &mqtt_topic_length)))
+    if (AZ_OK != (rc = az_iot_hub_client_telemetry_get_publish_topic(&client, NULL, mqtt_topic, outLength, &outLength)))
     {
         printf("Failed to get MQTT topic: %d\n", rc);
         return rc;
     }
 
-    mqtt_topic = heapRealloc(hHeap, mqtt_topic, mqtt_topic_length + 1);
+    mqtt_topic = heapRealloc(hHeap, mqtt_topic, outLength + 1);
     printf("\tTopic: %s\n", mqtt_topic);
 
-    // open the non-blocking TCP socket (connecting to the broker)
-    signal(SIGPIPE, SIG_IGN);
+    // Initialize the TLS library
+    initialize_TLS(&config.ctx, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI);
 
-    char *hostname = heapMalloc(hHeap, az_span_size(config.hostname) + 1);
-
-    az_span_to_str(hostname, az_span_size(config.hostname) + 1, config.hostname);
-
-    if (0 != open_nb_socket(&config.ctx, hostname, "8883", bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
-    {
-        printf("Unable to open socket\n");
-        return 4;
-    }
-
-    // Setup the client 
+    // Setup the MQTT client 
     struct mqtt_client mqttclient;
 
     PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
 
     mqtt_init(&mqttclient, &config.ctx, mqtt_sendbuf, MQTT_SENDBUF_LENGTH, mqtt_recvbuf, MQTT_RECVBUF_LENGTH, publish_callback);
     mqttclient.publish_response_callback_state = &publish_user;
-    mqtt_connect(&mqttclient, client_id, NULL, NULL, 0, user_id, mqtt_password, 0, 400);
-    topic_subscribe(&mqttclient);
 
-    // Check for any errors
-    if (mqttclient.error != MQTT_OK) {
-        printf("error: %s\n", mqtt_error_str(mqttclient.error));
+    // open the non-blocking TCP socket (connecting to the broker)
+    signal(SIGPIPE, SIG_IGN);
+
+    long expiryTime;
+
+    if (0 != (rc = server_connect(&config, &client, &mqttclient, false, &expiryTime)))
+    {
+        printf("Unable to connect (needs a better message)\n");
         return -4;
     }
 
@@ -807,35 +851,10 @@ int main()
         {
             // Need to regenerate a SAS token
             printf("Reaunthenticating\n");
-            mqtt_disconnect(&mqttclient);
-            mqtt_sync(&mqttclient);
-            close_socket(&config.ctx);
-            expiryTime = time(NULL) + config.sas_ttl;
-            mqtt_password_length = 256;
-            mqtt_password = heapRealloc(hHeap, mqtt_password, mqtt_password_length);
-
-            if (AZ_OK != (rc = getPassword(&client, config.decodedSAK, expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+            if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &expiryTime)))
             {
-                printf("Failed to generate MQTT password: %d\n", rc);
-                return 4;
-            }
-
-            if (0 != open_nb_socket(&config.ctx, hostname, "8883", bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
-            {
-                printf("Unable to open socket\n");
-                return 4;
-            }
-
-            if (MQTT_OK != mqtt_connect(&mqttclient, client_id, NULL, NULL, 0, user_id, mqtt_password, 0, 400))
-            {
-                printf("Failed to connect: %s\n", mqtt_error_str(mqttclient.error));
-                return 4;
-            }
-
-            if (MQTT_OK != topic_subscribe(&mqttclient))
-            {
-                printf("Failed to connect and subscribe: %s", mqtt_error_str(mqttclient.error));
-                return 4;
+                printf("Connection failed (TODO)\n");
+                return -4;
             }
         }
 
