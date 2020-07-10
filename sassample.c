@@ -26,6 +26,7 @@
 #include <azure/core/az_span.h>
 #include <azure/core/az_platform.h>
 #include <azure/core/az_json.h>
+#include <azure/core/az_log.h>
 
 #include <azure/core/internal/az_precondition_internal.h>
 
@@ -706,15 +707,13 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     // Get the MQTT password
     *expiryTime = time(NULL) + config->sas_ttl;
     size_t mqtt_password_length = 256;
-    char *mqtt_password = heapMalloc(hHeap, mqtt_password_length);
+    char mqtt_password[256];
 
     if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
     {
         printf("Failed to generate MQTT password: %d\n", rc);
         return -1;
     }
-
-    mqtt_password = heapRealloc(hHeap, mqtt_password, mqtt_password_length + 1);
 
     // Code just assumes MQTT connect will be ok if socker it connected - failure is considered terminal
     mqtt_connect(mqtt_client, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
@@ -727,6 +726,29 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     }
 
     return mqtt_client->error == MQTT_OK? 0 : -2;
+}
+
+/**
+ * @brief Called when precondition fails. Prints a message and crashes the program;
+ */
+void precondition_failure_callback()
+{
+    printf("Precondition failed\n");
+
+    int x = 1;
+    int y = 0;
+    int z = x / y;
+}
+
+/**
+ * @brief Print out SDK log data
+ * 
+ * @param classification[in]: Severity of the message
+ * @param message[in]: The message content
+ */
+void log_func(az_log_classification classification, az_span message)
+{
+   printf("%.*s\n", az_span_size(message), az_span_ptr(message));
 }
 
 /**
@@ -831,6 +853,12 @@ int main()
 
     mqtt_topic = heapRealloc(hHeap, mqtt_topic, outLength + 1);
     printf("\tTopic: %s\n", mqtt_topic);
+
+    // Optionally set up an alternative precondition failure callback
+    az_precondition_failed_set_callback(precondition_failure_callback);
+
+    // Optionally set up a logger
+    az_log_set_callback(log_func);
 
     // Initialize the TLS library
     initialize_TLS(&config.ctx, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI);
