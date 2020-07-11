@@ -16,6 +16,13 @@
  * 
  * @remark Find information about the Embedded C library at https://github.com/azure//azure-sdk-for-c
  * 
+ * Implements the following direct methods:
+ * test: Does nothing except print the payload
+ * kill: Gracefully terminates the application - payload is ignored and can be empty
+ * interval: Modifies the telemetry interval - payload should be '{ "value": n }' where n is an inteval between 1 and 120 in seconds
+ * 
+ * Implements the following device twin properties
+ * interval: Modifies the telemetry interval where the value is number of seconds between 1 and 120
  */
 
 #define VERSION "1.0"
@@ -86,6 +93,40 @@ HEAPHANDLE hHeap = NULL;            /** Global heap pointer */
 
 
 volatile bool noctrlc = true;       /** Global so signal trap can request graceful termination */
+
+static az_result read_configuration_entry(
+        const char* name,
+        const char* env_name,
+        char* default_value,
+        bool hide_value,
+        az_span buffer,
+        az_span* out_value);
+static az_result read_configuration_and_init_client(CONFIGURATION *configuration);
+static az_result split_connection_string(CONFIGURATION *configuration);
+static void print_array(const char *leader, const char *buffer, int buffer_len);
+static void print_az_span(const char *leader, const az_span buffer);
+static void url_decode_in_place(char *in);
+static void signalHandler(int signum);
+static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
+static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
+static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
+static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
+static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *payload_out);
+static int send_reported_property(PUBLISH_USER *publish_user, az_span payload_span);
+static int report_property(PUBLISH_USER *publish_user);
+static az_result update_property(PUBLISH_USER *publish_user, az_span desired_payload);
+static void publish_callback(void** state, struct mqtt_response_publish *published);
+static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClient);
+static az_result getPassword(az_iot_hub_client *client, 
+        az_span decodedSAK, 
+        long expiryTime, 
+        char *mqtt_password, 
+        size_t mqtt_password_length,
+        size_t *mqtt_password_out_length);
+static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient);
+static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime);
+void precondition_failure_callback();
+void log_func(az_log_classification classification, az_span message);
 
 /**
  * @brief Read option value from environment
@@ -260,11 +301,11 @@ static az_result split_connection_string(CONFIGURATION *configuration)
 
 /**
  * @brief Prints a string without a terminating NULL to the console with an
- * optional leader.
+ * optional leader. New line will be appended.
  * 
- * @param[in] leader If not NULL will be printed before the array
- * @param[in] buffer Characters to print
- * @param[in] buffer_len Number of characters in \p buffer
+ * @param leader[in] If not NULL will be printed before the array
+ * @param buffer[in] Characters to print
+ * @param buffer_len[in] Number of characters in \p buffer
  */
 static void print_array(const char *leader, const char *buffer, int buffer_len)
 {
@@ -277,6 +318,18 @@ static void print_array(const char *leader, const char *buffer, int buffer_len)
         fwrite(buffer, 1, buffer_len, stdout);
 
     putc('\n', stdout);
+}
+
+/**
+ * @brief Prints an az_span without a terminating NULL to the console with an
+ * optional leader. New line will be appended.
+ * 
+ * @param leader[in] If not NULL will be printed before the array
+ * @param buffer[in] az_span to print
+ */
+static void print_az_span(const char *leader, const az_span buffer)
+{
+    print_array(leader, az_span_ptr(buffer), az_span_size(buffer));
 }
 
 /**
@@ -339,7 +392,8 @@ static void url_decode_in_place(char *in)
 /**
  * @brief Used to pass CTRL-C to main thread to allow graceful closure
  */
-void signalHandler(int signum) {
+static void signalHandler(int signum)
+{
     (void)signum;       // Will always be SIGINT
     noctrlc = false;
 }
@@ -377,6 +431,7 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
         {
             publish_user->interval = work;
             printf("Interval modifed to %d\n", publish_user->interval);
+            report_property(publish_user);
         }
     }
     else
@@ -465,9 +520,9 @@ static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
 /**
  * @brief Called to process an unrecognized command - returns an error to the hub.
  * 
- * @param[in] publish_user: Passed via the user word
- * @param[in] method_request: Method name and request id
- * @param[in] payload: Data sent by client
+ * @param publish_user[in]: Passed via the user word
+ * @param method_request[in]: Method name and request id
+ * @param payload[in]: Data sent by client
  */
 static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
@@ -486,6 +541,126 @@ static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_
 }
 
 /**
+ * @brief Builds the JSON update string for the new interval value.
+ * 
+ * @param publish_user[in]: Control block
+ * @param payload_out[in,out] Span must be initialized and JSON will be placed in its buffer
+ * 
+ * @return AZ_OK if successful
+ */
+static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *payload_out)
+{
+    static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
+
+    az_json_builder builder;
+
+    AZ_RETURN_IF_FAILED(az_json_builder_init(&builder, *payload_out, NULL));
+    AZ_RETURN_IF_FAILED(az_json_builder_append_begin_object(&builder));
+    AZ_RETURN_IF_FAILED(az_json_builder_append_property_name(&builder, reported_property_name));
+    AZ_RETURN_IF_FAILED(az_json_builder_append_int32_number(&builder, publish_user->interval));
+    AZ_RETURN_IF_FAILED(az_json_builder_append_end_object(&builder));
+
+    *payload_out = az_json_builder_get_json(&builder);
+
+    return AZ_OK;
+}
+
+/**
+ * @brief Sends the updated property value to update the device twin at the server.
+ * 
+ * @param publish_user[in]: Control block
+ * @param payload_span[in]: JSON to send to the server
+ * 
+ * @returns Zero if successful
+ */
+static int send_reported_property(PUBLISH_USER *publish_user, az_span payload_span)
+{
+    static az_span request_id = AZ_SPAN_LITERAL_FROM_STR("reported_prop");
+    char report_topic[128];
+    
+    printf("Sending updated properties: %.*s\n", az_span_size(payload_span), az_span_ptr(payload_span));
+
+    if (az_failed(az_iot_hub_client_twin_patch_get_publish_topic(publish_user->client, request_id, report_topic, sizeof(report_topic), NULL)))
+    {
+        printf("Failed to acquire report topic\n");
+        return -1;
+    }
+
+    mqtt_publish(publish_user->mqttclient, report_topic, az_span_ptr(payload_span), az_span_size(payload_span), 0);
+
+    if (publish_user->mqttclient->error != MQTT_OK)
+    {
+        printf("Failed to publish reported update: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Builds and sends a device twin property update
+ * 
+ * @param publish_user[in]: Control block
+ * 
+ * @returns Zero if successful
+ */
+static int report_property(PUBLISH_USER *publish_user)
+{
+    char buffer[256];
+    az_span buffer_span = AZ_SPAN_FROM_BUFFER(buffer);
+
+    if (az_failed(build_reported_properties(publish_user, &buffer_span)))
+    {
+        printf("Failed to build report JSON\n");
+        return -1;
+    }
+
+    if (0 != send_reported_property(publish_user, buffer_span))
+    {
+        printf("Failed to send reported property");
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Parses the JSON from the device twin update and applies it to the interval if it is valid
+ * 
+ * @param publish_user[in]: Control block
+ * @param desired_payload[in]: Desired values from server
+ * 
+ * @returns AZ_OK if successful
+ */
+static az_result update_property(PUBLISH_USER *publish_user, az_span desired_payload)
+{
+    static az_span version_name = AZ_SPAN_LITERAL_FROM_STR("$version");
+    static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
+    
+    az_json_parser parser;
+    az_json_token token;
+    az_json_token_member token_member;
+
+    AZ_RETURN_IF_FAILED(az_json_parser_init(&parser, desired_payload));
+    AZ_RETURN_IF_FAILED(az_json_parser_parse_token(&parser, &token));
+    AZ_RETURN_IF_FAILED(az_json_parser_parse_token_member(&parser, &token_member));
+
+    while (!az_span_is_content_equal(token_member.name, version_name))
+    {
+        if (az_span_is_content_equal(token_member.name, reported_property_name))
+        {
+            double property_value = 5.0;
+
+            AZ_RETURN_IF_FAILED(az_json_token_get_number(&token_member.token, &property_value));
+            publish_user->interval = (uint8_t)property_value;
+            printf("Updating %.*s\" to %d\n", az_span_size(reported_property_name), az_span_ptr(reported_property_name), publish_user->interval);
+        }
+
+        AZ_RETURN_IF_FAILED(az_json_parser_parse_token_member(&parser, &token_member));
+    }
+}
+
+/**
  * @brief This function is called whenever a message is publish on any of the subscribed topics. It will figure out if this is a
  * C2D message or a direct method. The former just prints the message whereas the latter will call the appropriate function if the
  * command is recognized or the unknown to return an error.
@@ -494,16 +669,23 @@ static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_
  * @param[in] method_request: Method name and request id
  * @param[in] payload: Data sent by client
  */
-static void publish_callback(void** state, struct mqtt_response_publish *published) 
+static void publish_callback(void** state, struct mqtt_response_publish *published)
 {
     PUBLISH_USER *publish_user = (PUBLISH_USER *)(*state);
+    int rc;
 
     char workArea[256];
 
     az_span in_topic = az_span_init((uint8_t*)published->topic_name, published->topic_name_size);
     az_iot_hub_client_c2d_request c2d_request;
     az_iot_hub_client_method_request method_request;
+    az_iot_hub_client_twin_response twin_response;
     az_pair out;
+    az_json_token out_token;
+    az_result az_r;
+    double out_value;
+    int desired_interval;
+    int reported_interval;
 
     /* AZ_ERROR_IOT_TOPIC_NO_MATCH */
     if (AZ_OK == az_iot_hub_client_c2d_parse_received_topic(publish_user->client, in_topic, &c2d_request))
@@ -563,6 +745,81 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             printf("Failed to parse method name\n");
         }
     }
+    else if (AZ_OK == az_iot_hub_client_twin_parse_received_topic(publish_user->client, in_topic, &twin_response))
+    {
+        switch (twin_response.response_type)
+        {
+        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_GET:
+            print_array("Response type get: ", published->application_message, published->application_message_size);
+            printf("Response status: %d\n", twin_response.status);
+            print_az_span("Request Id: ", twin_response.request_id);
+
+            if (twin_response.status == AZ_IOT_STATUS_OK)
+            {
+                az_r = az_json_parse_by_pointer(az_span_init((uint8_t *)published->application_message, published->application_message_size), AZ_SPAN_FROM_STR("/desired/interval"), &out_token);
+
+                if (!az_failed(az_r) && out_token.kind == AZ_JSON_TOKEN_NUMBER && !az_failed(az_json_token_get_number(&out_token, &out_value)))
+                {
+                    int desired_interval = round(out_value);
+
+                    if (desired_interval < 1 || desired_interval > 120)
+                    {
+                        printf("Desired interval of %d is out of range\n", desired_interval);
+                    }
+                    else
+                    {
+                        if (publish_user->interval != desired_interval)
+                        {
+                            publish_user->interval = desired_interval;
+                            report_property(publish_user);
+                        }
+                    }
+                }
+                else
+                {
+                    az_r = az_json_parse_by_pointer(az_span_init((uint8_t *)published->application_message, published->application_message_size), AZ_SPAN_FROM_STR("/reported/interval"), &out_token);
+
+                    if (!az_failed(az_r) && !az_failed(az_json_token_get_number(&out_token, &out_value)))
+                    {
+                        reported_interval = round(out_value);
+                        publish_user->interval = reported_interval;
+                    }
+                }
+            }
+
+            break;
+        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_REPORTED_PROPERTIES:
+            printf("Twin reported properties response\n");
+
+            if (published->application_message_size == 0)
+            {
+                printf("Reported properties were updated successfully\n");
+            }
+            else
+            {
+                print_array("Reported properties update failed: ", published->application_message, published->application_message_size);
+            }
+            
+            printf("Response status: %d\n", twin_response.status);
+            break;
+        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_DESIRED_PROPERTIES:
+            print_array("Response type desired properties: ", published->application_message, published->application_message_size);
+            printf("Response status: %d\n", twin_response.status);
+            
+            if (az_failed(rc = update_property(publish_user, az_span_init((uint8_t *)published->application_message, published->application_message_size))))
+            {
+                printf("Failed to update property locally, az_result return code %04x\n", rc);
+            }
+            else
+            {
+                report_property(publish_user);
+            }
+            break;
+        default:
+            printf("Unrecognized device twin response type: %d\n", twin_response.response_type);
+            break;
+        }
+    }
     else
     {
         if (az_span_size(in_topic) < sizeof(workArea))
@@ -575,6 +832,44 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             print_array("No clue what is going on with this message: ", published->topic_name, published->topic_name_size);
         }
     }
+}
+
+/**
+ * @brief Requests the twin document from the server
+ * 
+ * @param client[in] IoT hub client control block
+ * @param mqttClient[in] MQTT control block
+ * 
+ * @return zero if successful
+ */
+static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClient)
+{
+    int rc;
+    static az_span req_id = AZ_SPAN_LITERAL_FROM_STR("get_twin");
+    char twin_topic[128];
+
+    printf("Device requesting twin document from service.\n");
+
+    // Get the topic to send a twin GET publish message to service.
+    if (az_failed(rc = az_iot_hub_client_twin_document_get_publish_topic(client, req_id, twin_topic, sizeof(twin_topic), NULL)))
+    {
+        printf("Unable to get twin document publish topic, az_result return code %04x\n", rc);
+        return rc;
+    }
+
+    // Publish the twin document request. This will trigger the service to send back the twin document
+    // for this device. The response is handled in the on_received function.
+    mqtt_publish(mqttClient, twin_topic, NULL, 0, 0);
+    mqtt_sync(mqttClient);
+    mqtt_sync(mqttClient);
+
+    if (mqttClient->error != MQTT_OK)
+    {
+        printf("Failed to publish twin document request: %s\n", mqtt_error_str(mqttClient->error));
+        return mqttClient->error;
+    }
+
+    return 0;
 }
 
 /**
@@ -654,6 +949,8 @@ static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
 {
     mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_METHODS_SUBSCRIBE_TOPIC, 0);
     mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_C2D_SUBSCRIBE_TOPIC, 0);
+    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_TWIN_PATCH_SUBSCRIBE_TOPIC, 0);
+    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_SUBSCRIBE_TOPIC, 0);
     mqtt_sync(mqttclient);
 
     return mqttclient->error;
@@ -887,7 +1184,12 @@ int main()
 
     signal(SIGINT, signalHandler);
 
-    printf("\nSending telemtry - press CTRL-C to exit\n\n");
+    if (0 != (rc = request_twin(&client, &mqttclient)))
+    {
+        printf("Failed to request twin: %d\n", rc);
+    }
+
+    printf("\nSending telemtry at interval %d - press CTRL-C to exit\n\n", publish_user.interval);
 
     // Start sending data
     while (publish_user.run && noctrlc)

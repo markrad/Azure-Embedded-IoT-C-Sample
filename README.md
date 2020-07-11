@@ -7,9 +7,9 @@ This is a sample application built using the [Azure Embedded C SDK](https://gith
 - Receive C2D messages from the IoT hub (but just prints them out)
 - Receive and action two device methods :- interval and kill
 - Reconnection logic
+- Device twins that allow one to modify the telemetry interval
 
 ## Not Implemented
-- No support for device twins
 - Error handling probably leaves something to be desired (but is getting better)
 
 ## Components
@@ -32,5 +32,4 @@ You will need to provide at least two and optionally three environment variables
 - **AZ_IOT_DEVICE_X509_TRUST_PEM_FILE** The filename of the PEM format certificates that will be used to validate the server's certificate. This is the trusted root certificate.
 - **AZ_IOT_DEVICE_SAS_TTL** Optionally the SAS token time to live value in seconds. This will default to 3600 if omitted.
 ## To do
-- Add device twin capablilities
 - Review and improve error handling
