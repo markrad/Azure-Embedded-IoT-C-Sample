@@ -25,7 +25,7 @@
  * interval: Modifies the telemetry interval where the value is number of seconds between 1 and 120
  */
 
-#define VERSION "1.0"
+#define VERSION "1.1"
 
 #include <azure/iot/az_iot_hub_client.h>
 #include <azure/iot/az_iot_common.h>
@@ -69,7 +69,7 @@ typedef struct
     az_span deviceId;
     az_span sharedAccessKey;
     az_span decodedSAK;
-    az_span x509cert;
+    br_x509_certificate *x509cert;
     int x509cert_count;
     private_key *x509pk;
     char *client_id;
@@ -91,12 +91,11 @@ typedef struct
 } PUBLISH_USER;
 
 // Buffer size constants
-#define HEAP_LENGTH 1024 * 12
+#define HEAP_LENGTH 1024 * 24
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
 
 HEAPHANDLE hHeap = NULL;            /** Global heap pointer */
-
 
 volatile bool noctrlc = true;       /** Global so signal trap can request graceful termination */
 
@@ -1055,16 +1054,25 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     // Get the MQTT password
     *expiryTime = time(NULL) + config->sas_ttl;
     size_t mqtt_password_length = 256;
-    char mqtt_password[256];
+    char *mqtt_password = heapMalloc(hHeap, 256);
 
-    if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+    if (config->usingX509 == false)
     {
-        printf("Failed to generate MQTT password: %d\n", rc);
-        return -1;
+        if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+        {
+            printf("Failed to generate MQTT password: %d\n", rc);
+            return -1;
+        }
     }
+    else
+    {
+        mqtt_password = NULL;
+    }
+    
 
     // Code just assumes MQTT connect will be ok if socker it connected - failure is considered terminal
     mqtt_connect(mqtt_client, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
+    heapFree(hHeap, mqtt_password);
     topic_subscribe(mqtt_client);
     mqtt_sync(mqtt_client);
 
@@ -1099,12 +1107,21 @@ void log_func(az_log_classification classification, az_span message)
    printf("%.*s\n", az_span_size(message), az_span_ptr(message));
 }
 
+void print_heap_info()
+{
+    HEAPINFO hi;
+
+    heapGetInfo(hHeap, &hi);
+
+    printf("Free: %d\tUsed: %d\tLargest: %d\n", hi.freeBytes, hi.usedBytes, hi.largestFree);
+}
+
 /**
  * @brief Entry point of Azure SDK for C sample - sends a message at a fixed interval to an IoT hub
  */
 int main()
 {
-    printf("Azure SDK for C IoT device sample using SAS authentication: V%s\n\n", VERSION);
+    printf("Azure SDK for C IoT device sample: V%s\n\n", VERSION);
     // All memory required is defined here
     static uint8_t heap[HEAP_LENGTH];                       // Block of memory used by private heap functions
     static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI];      // Buffer for TLS library
@@ -1147,19 +1164,24 @@ int main()
         }
         else
         {
-            if (0 != read_private_key(az_span_ptr(config.x509Key_filename), config.x509pk))
+            if (0 != read_private_key(az_span_ptr(config.x509Key_filename), &config.x509pk))
             {
                 printf("Unable to parse private key\n");
                 return 4;
             }
 
-            if (0 <= (config.x509cert_count = read_certificates_string(az_span_ptr(config.x509Cert_filename), &config.x509cert)))
+            if ((config.x509cert_count = read_certificates_string(az_span_ptr(config.x509Cert_filename), &config.x509cert)) <= 0)
             {
                 printf("Unable to parse device certificate\n");
                 return 4;
             }
         }
     }
+    else
+    {
+        config.x509pk = NULL;
+    }
+    
 
     az_iot_hub_client client;
     az_iot_hub_client_options options = az_iot_hub_client_options_default();
@@ -1197,20 +1219,29 @@ int main()
 
     config.user_id = heapRealloc(hHeap, config.user_id, outLength + 1);
 
-    // Decode the SAS key
-    config.decodedSAK = az_heap_alloc(hHeap, 256);
-
-    if (AZ_OK != (rc = az_decode_base64(config.sharedAccessKey, config.decodedSAK, &config.decodedSAK)))
+    if (config.usingX509 == false)
     {
-        printf("Failed to decode the shared access key: %d\n", rc);
-        return 4;
+        // Decode the SAS key
+        config.decodedSAK = az_heap_alloc(hHeap, 256);
+
+        if (AZ_OK != (rc = az_decode_base64(config.sharedAccessKey, config.decodedSAK, &config.decodedSAK)))
+        {
+            printf("Failed to decode the shared access key: %d\n", rc);
+            return 4;
+        }
+
+        config.decodedSAK = az_heap_adjust(hHeap, config.decodedSAK);
     }
+    else
+    {
+        config.decodedSAK = AZ_SPAN_NULL;
+    }
+    
 
-    config.decodedSAK = az_heap_adjust(hHeap, config.decodedSAK);
-
-    printf("\nMQTT connection details:\n");
-    printf("\tClient Id: %s\n", config.client_id);
-    printf("\t  User Id: %s\n", config.user_id);
+    printf("\nMQTT connection details\n");
+    printf("\tAuthentication: %s\n", (config.usingX509? "X.509" : "SAS Token"));
+    printf("\t     Client Id: %s\n", config.client_id);
+    printf("\t       User Id: %s\n", config.user_id);
 
     // Get the MQTT publish topic
     outLength = 100;
@@ -1223,7 +1254,7 @@ int main()
     }
 
     mqtt_topic = heapRealloc(hHeap, mqtt_topic, outLength + 1);
-    printf("\tTopic: %s\n", mqtt_topic);
+    printf("\t         Topic: %s\n", mqtt_topic);
 
     // Optionally set up an alternative precondition failure callback
     az_precondition_failed_set_callback(precondition_failure_callback);
@@ -1232,7 +1263,11 @@ int main()
     az_log_set_callback(log_func);
 
     // Initialize the TLS library
-    initialize_TLS(&config.ctx, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI);
+    if (0 != initialize_TLS(&config.ctx, config.x509cert, config.x509cert_count, config.x509pk, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
+    {
+        printf("TLS initialization failed\n");
+        return 4;
+    }
 
     // Setup the MQTT client 
     struct mqtt_client mqttclient;
@@ -1269,7 +1304,7 @@ int main()
     while (publish_user.run && noctrlc)
     {
         // Check for SAS token about to expire and refresh
-        if (expiryTime - time(NULL) < (config.sas_ttl * 80 / 100))
+        if (config.usingX509 == false && expiryTime - time(NULL) < (config.sas_ttl * 80 / 100))
         {
             // Need to regenerate a SAS token
             printf("Reaunthenticating\n");

@@ -24,8 +24,8 @@ typedef struct {
  */ 
 size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[]);
 
-int read_private_key(const char *key_file, private_key *priv_key);
+int read_private_key(const char *key_file, private_key **priv_key);
 
-int read_certificates_string(const char *certs_filename, az_span *certs);
+int read_certificates_string(const char *certs_filename, br_x509_certificate **certs);
 
 

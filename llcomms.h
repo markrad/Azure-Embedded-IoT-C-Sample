@@ -9,7 +9,7 @@
  * @param bearssl_iotbuf[in] Buffer for BearSSL
  * @param bearssl_iobuf_len Length of buffer
  */
-void initialize_TLS(bearssl_context *ctx, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len);
+int initialize_TLS(bearssl_context *ctx, br_x509_certificate *x509cert, int x509cert_count, private_key *x509pk, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len);
 
 /**
  * @brief Open a nonblocking socket to the MQTT broker

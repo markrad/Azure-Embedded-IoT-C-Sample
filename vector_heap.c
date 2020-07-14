@@ -155,7 +155,7 @@ int vector_pop(VECTORHANDLE hvector, void* out)
 
 int vector_remove(VECTORHANDLE hvector, uint16_t entry, void* out)
 {
-    if (hvector == NULL || out == NULL)
+    if (hvector == NULL)
     {
         return -1;
     }
@@ -183,6 +183,23 @@ int vector_remove(VECTORHANDLE hvector, uint16_t entry, void* out)
     }
 
     return vector->error;
+}
+
+int vector_compress(VECTORHANDLE hvector)
+{
+    if (hvector == NULL)
+    {
+        return -1;
+    }
+
+    VECTOR vector = (VECTOR)hvector;
+
+    if (vector->current_elements < vector->all_elements)
+    {
+        vector->elements = heapRealloc(vector->hheap, vector->elements, vector->current_elements * vector->element_size);
+    }
+
+    return 0;
 }
 
 void* vector_get_buffer(VECTORHANDLE hvector)

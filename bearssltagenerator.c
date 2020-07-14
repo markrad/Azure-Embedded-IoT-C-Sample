@@ -30,7 +30,10 @@ static az_span read_file(const char *file_name)
     FILE *f = fopen(file_name, "rb");
 
     if (f == NULL)
+    {
+        printf("Cannot open file %s\n", file_name);
         return AZ_SPAN_NULL;
+    }
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
@@ -127,7 +130,6 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 
 		while (len > 0) {
 			size_t tlen;
-
 			tlen = br_pem_decoder_push(&pc, buf, len);
 			buf += tlen;
 			len -= tlen;
@@ -153,7 +155,13 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 			case BR_PEM_END_OBJ:
 				if (inobj)
 				{
-					po.data = bv.buffer;;
+                    if (bv.error == true)
+                    {
+                        printf("Out of memory decoding pem data\n");
+                        break;
+                    }
+
+					po.data = bv.buffer;
 					po.data_len = bv.data_length;
                     vector_append(pem_list, &po);
 					po.name = NULL;
@@ -202,7 +210,7 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 	return pem_list;
 }
 
-int read_certificates_string(const char *certs_filename, az_span *certs) //const char *buf, size_t len)
+int read_certificates_string(const char *certs_filename, br_x509_certificate **certs) //const char *buf, size_t len)
 {
 	VECTORHANDLE cert_list; 
     VECTORHANDLE pem_list;
@@ -296,10 +304,12 @@ int read_certificates_string(const char *certs_filename, az_span *certs) //const
         }
     }
 
+    az_heap_free(hHeap, content);
+
     if (result >= 0)
     {
         result = vector_get_count(cert_list);
-        *certs = az_span_init(vector_get_buffer(cert_list), sizeof(br_x509_certificate) * result);
+        *certs = (br_x509_certificate *)vector_get_buffer(cert_list);
         vector_destroy(cert_list, true);
     }
 
@@ -435,7 +445,7 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
 	return sk;
 }
 
-int read_private_key(const char *key_file, private_key *priv_key)
+int read_private_key(const char *key_file, private_key **priv_key)
 {
     static const char RSA_PRIVATE_KEY[] = "RSA PRIVATE KEY";
     static const char EC_PRIVATE_KEY[] = "EC PRIVATE KEY";
@@ -457,6 +467,7 @@ int read_private_key(const char *key_file, private_key *priv_key)
     size_t u;
 
 	pos = decode_pem(az_span_ptr(buf), az_span_size(buf));
+    az_heap_free(hHeap, buf);
 		
     if (pos != NULL) 
     {
@@ -469,7 +480,7 @@ int read_private_key(const char *key_file, private_key *priv_key)
                 0 == memcmp(work->name, EC_PRIVATE_KEY, EC_PRIVATE_KEY_LENGTH) ||
                 0 == memcmp(work->name, RSA_PRIVATE_KEY, RSA_PRIVATE_KEY_LENGTH))
             {
-                priv_key = decode_key(work->data, work->data_len);
+                *priv_key = decode_key(work->data, work->data_len);
                 break;
             }
         }
@@ -594,7 +605,7 @@ size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[
 {
     // Converts a PEM certificate in a string into the format required by BearSSL
     VECTORHANDLE xcs;
-    az_span xcs_span;
+    br_x509_certificate *xcs_span;
     br_x509_trust_anchor work;
 	br_x509_trust_anchor *anchArray;
     size_t u;
@@ -603,7 +614,7 @@ size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[
     int result;
 
     num = read_certificates_string(cert_file, &xcs_span);
-    xcs = vector_wrap(hHeap, az_span_ptr(xcs_span), sizeof(br_x509_certificate), num);
+    xcs = vector_wrap(hHeap, xcs_span, sizeof(br_x509_certificate), num);
     //xcs = read_certificates_string(az_span_ptr(content), az_span_size(content));
     //num = vector_get_count(xcs);
 

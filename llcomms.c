@@ -13,6 +13,8 @@
 
 #include <bearssl.h>
 
+#include "bearssltagenerator.h"
+
 //#include "mqtt_pal.h"
 
 /*
@@ -107,13 +109,78 @@ static int host_connect(const char *host, const char *port) {
     return sockfd;
 }
 
-void initialize_TLS(bearssl_context *ctx, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len)
+static int get_cert_signer_algo(br_x509_certificate *xc)
 {
+	br_x509_decoder_context dc;
+	int result;
+
+	br_x509_decoder_init(&dc, 0, 0);
+	br_x509_decoder_push(&dc, xc->data, xc->data_len);
+	result = br_x509_decoder_last_error(&dc);
+
+	if (result != 0) 
+    {
+		printf("Failed to get signer algorithm %d\n", result);
+        result = 0;
+	}
+    else
+    {
+    	result = br_x509_decoder_get_signer_key_type(&dc);
+    }
+
+    return result;
+}
+
+int initialize_TLS(bearssl_context *ctx, br_x509_certificate *x509cert, int x509cert_count, private_key *x509pk, uint8_t *bearssl_iobuf, size_t bearssl_iobuf_len)
+{
+    unsigned int cert_signer_algo;
+    int result = 0;
+
     br_ssl_client_init_full(&ctx->sc, &ctx->xc, ctx->anchOut, ctx->ta_count);
 	br_ssl_engine_set_buffer(&ctx->sc.eng, bearssl_iobuf, bearssl_iobuf_len, 1);
 
+    if (x509pk != NULL)
+    {
+        switch (x509pk->key_type)
+        {
+        case BR_KEYTYPE_RSA:
+            br_ssl_client_set_single_rsa(
+                &ctx->sc, 
+                x509cert, 
+                x509cert_count, 
+                &x509pk->key.rsa, 
+                br_rsa_pkcs1_sign_get_default());
+            break;
+        case BR_KEYTYPE_EC:
+            cert_signer_algo = get_cert_signer_algo(x509cert);
+
+            if (cert_signer_algo == 0)
+            {
+                result = -1;
+            }
+            else
+            {
+                br_ssl_client_set_single_ec(
+                    &ctx->sc,
+                    x509cert,
+                    x509cert_count,
+                    &x509pk->key.ec,
+                    BR_KEYTYPE_KEYX | BR_KEYTYPE_SIGN, 
+                    cert_signer_algo,
+                    br_ec_get_default(),
+                    br_ecdsa_sign_asn1_get_default());
+            }
+            break;
+        default:
+            printf("Unrecognized private key type\n");
+            result = -1;
+        }
+    }
+
     ctx->low_read = sock_read;
     ctx->low_write = sock_write;
+
+    return result;
 }
 
 int open_nb_socket(bearssl_context *ctx,
