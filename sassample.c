@@ -62,6 +62,8 @@ typedef struct
 {
     az_span connectionString;
     az_span trustedRootCert;
+    az_span x509Cert;
+    az_span x509Key;
     az_span hostname;
     az_span port;
     az_span deviceId;
@@ -71,6 +73,7 @@ typedef struct
     char *user_id;
     bearssl_context ctx;
     uint32_t sas_ttl;
+    bool usingX509;
 } CONFIGURATION;
 
 /**
@@ -190,6 +193,8 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     static const char* ENV_DEVICE_CONNECTION_STRING = "AZ_IOT_CONNECTION_STRING";
     static const char* ENV_DEVICE_X509_TRUST_PEM_FILE = "AZ_IOT_DEVICE_X509_TRUST_PEM_FILE";
     static const char* ENV_DEVICE_SAS_TOKEN_TTL = "AZ_IOT_DEVICE_SAS_TTL";
+    static const char* ENV_DEVICE_X509_CLIENT_PEM_FILE = "AZ_IOT_DEVICE_X509_CLIENT_PEM_FILE";
+    static const char* ENV_DEVICE_X509_CLIENT_KEY_FILE = "AZ_IOT_DEVICE_X509_CLIENT_KEY_FILE";
 
     _az_PRECONDITION_NOT_NULL(configuration);
 
@@ -212,6 +217,16 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     AZ_RETURN_IF_FAILED(read_configuration_entry(
         "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span));
 
+    configuration->x509Cert = az_heap_alloc(hHeap, 1024);
+    AZ_RETURN_IF_FAILED(read_configuration_entry(
+        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509Cert, &configuration->x509Cert));
+    configuration->x509Cert = az_heap_adjust(hHeap, configuration->x509Cert);
+
+    configuration->x509Key = az_heap_alloc(hHeap, 1024);
+    AZ_RETURN_IF_FAILED(read_configuration_entry(
+        "X509 Client Key File", ENV_DEVICE_X509_CLIENT_KEY_FILE, "", false, configuration->x509Key, &configuration->x509Key));
+    configuration->x509Key = az_heap_adjust(hHeap, configuration->x509Key);
+
     az_result ar = az_span_atou32(az_span_slice(work_span, 0, az_span_size(work_span) - 1), &configuration->sas_ttl);
     az_heap_free(hHeap, work_span);
 
@@ -224,12 +239,15 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
  * @param[in,out] configuration Takes the connection string from here and puts the parts back in
  * 
  * @returns az_result of AZ_OK if successful
+ * 
+ * @note az_span variables have a null terminator but the length does not include that byte
  */
 static az_result split_connection_string(CONFIGURATION *configuration)
 {
-    static const char *HOSTNAME = "hostname";
-    static const char *DEVICEID = "deviceid";
-    static const char *SHAREDACCESSKEY = "sharedaccesskey";
+    const char *HOSTNAME = "hostname";
+    const char *DEVICEID = "deviceid";
+    const char *SHAREDACCESSKEY = "sharedaccesskey";
+    const char *X509 = "x509";
 
     static const char PORT[] = "8883";
 
@@ -240,6 +258,8 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     char *valueStart;
     az_span *configPtr;
     az_span work;
+    az_span x509_value = AZ_SPAN_NULL;
+    bool x509;
 
     _az_PRECONDITION_NOT_NULL(configuration);
 
@@ -247,20 +267,35 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     configuration->port = AZ_SPAN_NULL;
     configuration->deviceId = AZ_SPAN_NULL;
     configuration->sharedAccessKey = AZ_SPAN_NULL;
+    configuration->usingX509 = false;
 
     while (true)
     {
         if (inKeyword && *walker == '=')
         {
             *out = '\0';
+            x509 = false;
             if (0 == strcmp(HOSTNAME, buffer))
+            {
                 configPtr = &configuration->hostname;
+            }
             else if (0 == strcmp(DEVICEID, buffer))
+            {
                 configPtr = &configuration->deviceId;
+            }
             else if (0 == strcmp(SHAREDACCESSKEY, buffer))
+            {
                 configPtr = &configuration->sharedAccessKey;
+            }
+            else if (0 == strcmp(X509, buffer))
+            {
+                configPtr = &x509_value;
+                x509 = true;
+            }
             else
+            {
                 return AZ_ERROR_ARG;
+            }
             
             out = buffer;
             valueStart = ++walker;
@@ -268,8 +303,19 @@ static az_result split_connection_string(CONFIGURATION *configuration)
         }
         else if (!inKeyword && (*walker == '\0' || *walker == ';'))
         {
-            *configPtr = az_heap_alloc(hHeap, walker - valueStart);
-            az_span_copy(*configPtr, az_span_init(buffer, az_span_size(*configPtr)));
+            *configPtr = az_heap_alloc(hHeap, walker - valueStart + 1);
+            az_span remainder = az_span_copy(*configPtr, az_span_init(buffer, walker - valueStart));
+            az_span_copy_u8(remainder, '\0');
+            *configPtr = az_span_slice(*configPtr, 0, walker - valueStart);
+
+            if (x509)
+            {
+                if (0 == strcmp(az_span_ptr(*configPtr), "true"))
+                {
+                    configuration->usingX509 = true;
+                }
+                az_heap_free(hHeap, *configPtr);
+            }
 
             if (*walker)
             {
@@ -288,13 +334,15 @@ static az_result split_connection_string(CONFIGURATION *configuration)
         }
     }
 
+    // The connection string will never be used again
     az_heap_free(hHeap, configuration->connectionString);
     configuration->connectionString = AZ_SPAN_NULL;
     configuration->port = az_span_init((uint8_t *)PORT, strlen(PORT));
 
     return (az_span_size(configuration->hostname) != 0 && 
         az_span_size(configuration->deviceId) != 0 &&
-        az_span_size(configuration->sharedAccessKey) != 0)
+        ((az_span_size(configuration->sharedAccessKey) != 0 && configuration->usingX509 == false) ||
+         (az_span_size(configuration->sharedAccessKey) == 0 && configuration->usingX509 == true)))
     ? AZ_OK
     : AZ_ERROR_ARG;
 }
@@ -706,8 +754,8 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             }
             else 
             {
-                print_array("Property too long to process - key: ", az_span_ptr(out.key), az_span_size(out.key));
-                print_array("                             value: ", az_span_ptr(out.value), az_span_size(out.value));
+                print_az_span("Property too long to process - key: ", out.key);
+                print_az_span("                             value: ", out.value);
             }
         }
     }
@@ -1085,6 +1133,19 @@ int main()
     {
         printf("Failed to parse connection string - make sure it is a device connection string - %d\n", rc);
         return rc;
+    }
+
+    if (config.usingX509 == true)
+    {
+        if (az_span_size(config.x509Cert) == 0 || az_span_size(config.x509Key) == 0)
+        {
+            printf("Connection specifies X509 authentication but certificate or key was not passed\n");
+            return 4;
+        }
+        else
+        {
+            // Parse x509 client certificate and key here
+        }
     }
 
     az_iot_hub_client client;

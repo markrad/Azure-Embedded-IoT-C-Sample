@@ -56,3 +56,6 @@ build/
 
 # No VS Code
 .vscode/
+
+# No X509 device certificates or keys
+x509certs/
