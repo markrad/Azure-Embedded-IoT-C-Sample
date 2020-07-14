@@ -202,7 +202,7 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 	return pem_list;
 }
 
-static VECTORHANDLE read_certificates_string(const char *buf, size_t len)
+int read_certificates_string(const char *certs_filename, az_span *certs) //const char *buf, size_t len)
 {
 	VECTORHANDLE cert_list; 
     VECTORHANDLE pem_list;
@@ -213,21 +213,30 @@ static VECTORHANDLE read_certificates_string(const char *buf, size_t len)
     static const int CERTIFICATE_LEN = sizeof(CERTIFICATE) - 1;
     static const int X509_CERTIFICATE_LEN = sizeof(X509_CERTIFICATE) - 1;
 
+    az_span content = read_file(certs_filename);
+
+    if (az_span_ptr(content) == NULL)
+    {
+        printf("Failed to read X.509 certificate\n");
+        return -1;
+    }
+
     cert_list = vector_create(hHeap, sizeof(br_x509_certificate));
 
     if (cert_list == NULL)
     {
         printf("Unable to allocate memory to decode pem strings\n");
+        result = -1;
     }
     else
     {
-        pem_list = decode_pem(buf, len);
+        pem_list = decode_pem(az_span_ptr(content), az_span_size(content));
         
         if (pem_list == NULL) 
         {
             printf("Failed to decode pem\n");
             vector_destroy(cert_list, false);
-            cert_list = NULL;
+            result = -1;
         }
         else
         {
@@ -282,12 +291,19 @@ static VECTORHANDLE read_certificates_string(const char *buf, size_t len)
                 }
 
                 vector_destroy(cert_list, false);
-                cert_list = NULL;
+                result = -1;
             }
         }
     }
 
-	return cert_list;
+    if (result >= 0)
+    {
+        result = vector_get_count(cert_list);
+        *certs = az_span_init(vector_get_buffer(cert_list), sizeof(br_x509_certificate) * result);
+        vector_destroy(cert_list, true);
+    }
+
+	return result;
 }
 
 static void free_private_key(private_key *privkey)
@@ -578,24 +594,20 @@ size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[
 {
     // Converts a PEM certificate in a string into the format required by BearSSL
     VECTORHANDLE xcs;
+    az_span xcs_span;
     br_x509_trust_anchor work;
 	br_x509_trust_anchor *anchArray;
     size_t u;
     size_t v;
-    size_t num;
+    int num;
     int result;
 
-    az_span content = read_file(cert_file);
+    num = read_certificates_string(cert_file, &xcs_span);
+    xcs = vector_wrap(hHeap, az_span_ptr(xcs_span), sizeof(br_x509_certificate), num);
+    //xcs = read_certificates_string(az_span_ptr(content), az_span_size(content));
+    //num = vector_get_count(xcs);
 
-    if (az_span_ptr(content) == NULL)
-    {
-        return 0;
-    }
-
-    xcs = read_certificates_string(az_span_ptr(content), az_span_size(content));
-    num = vector_get_count(xcs);
-
-    if (num == 0)
+    if (num <= 0)
     {
         printf("No certificates found in string\n");
     }

@@ -60,6 +60,28 @@ VECTORHANDLE vector_create(HEAPHANDLE hheap, uint16_t element_size)
     return (VECTORHANDLE)vector;
 }
 
+VECTORHANDLE vector_wrap(HEAPHANDLE hheap, void *in, uint16_t element_size, uint16_t count)
+{
+    if (element_size == 0)
+    {
+        return NULL;
+    }
+
+    VECTOR vector = heapMalloc(hheap, sizeof(VECTOR_STRUCT));
+
+    if (vector != NULL)
+    {
+        vector->hheap = hheap;
+        vector->all_elements = count;
+        vector->current_elements = count;
+        vector->element_size = element_size;
+        vector->error = 0;
+        vector->elements = in;
+    }
+
+    return (VECTORHANDLE)vector;
+}
+
 int vector_append(VECTORHANDLE hvector, void* new_element)
 {
     if (hvector == NULL || new_element == NULL)

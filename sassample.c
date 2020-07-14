@@ -61,14 +61,17 @@
 typedef struct 
 {
     az_span connectionString;
-    az_span trustedRootCert;
-    az_span x509Cert;
-    az_span x509Key;
+    az_span trustedRootCert_filename;
+    az_span x509Cert_filename;
+    az_span x509Key_filename;
     az_span hostname;
     az_span port;
     az_span deviceId;
     az_span sharedAccessKey;
     az_span decodedSAK;
+    az_span x509cert;
+    int x509cert_count;
+    private_key *x509pk;
     char *client_id;
     char *user_id;
     bearssl_context ctx;
@@ -207,25 +210,25 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     configuration->connectionString = az_heap_adjust(hHeap, configuration->connectionString);
 
     // Not actually large enough to contain the maximum path but should do
-    configuration->trustedRootCert = az_heap_alloc(hHeap, 1024);
+    configuration->trustedRootCert_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trustedRootCert, &configuration->trustedRootCert));
-    configuration->trustedRootCert = az_heap_adjust(hHeap, configuration->trustedRootCert);
+        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trustedRootCert_filename, &configuration->trustedRootCert_filename));
+    configuration->trustedRootCert_filename = az_heap_adjust(hHeap, configuration->trustedRootCert_filename);
 
     work_span = az_heap_alloc(hHeap, 10);
 
     AZ_RETURN_IF_FAILED(read_configuration_entry(
         "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span));
 
-    configuration->x509Cert = az_heap_alloc(hHeap, 1024);
+    configuration->x509Cert_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509Cert, &configuration->x509Cert));
-    configuration->x509Cert = az_heap_adjust(hHeap, configuration->x509Cert);
+        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509Cert_filename, &configuration->x509Cert_filename));
+    configuration->x509Cert_filename = az_heap_adjust(hHeap, configuration->x509Cert_filename);
 
-    configuration->x509Key = az_heap_alloc(hHeap, 1024);
+    configuration->x509Key_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Client Key File", ENV_DEVICE_X509_CLIENT_KEY_FILE, "", false, configuration->x509Key, &configuration->x509Key));
-    configuration->x509Key = az_heap_adjust(hHeap, configuration->x509Key);
+        "X509 Client Key File", ENV_DEVICE_X509_CLIENT_KEY_FILE, "", false, configuration->x509Key_filename, &configuration->x509Key_filename));
+    configuration->x509Key_filename = az_heap_adjust(hHeap, configuration->x509Key_filename);
 
     az_result ar = az_span_atou32(az_span_slice(work_span, 0, az_span_size(work_span) - 1), &configuration->sas_ttl);
     az_heap_free(hHeap, work_span);
@@ -1122,7 +1125,7 @@ int main()
     }
 
     // Convert the certificate into something BearSSL understands
-    if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trustedRootCert), &config.ctx.anchOut)))
+    if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trustedRootCert_filename), &config.ctx.anchOut)))
     {
         printf("Trusted root certificate file is invalid\n");
         return 4;
@@ -1137,14 +1140,24 @@ int main()
 
     if (config.usingX509 == true)
     {
-        if (az_span_size(config.x509Cert) == 0 || az_span_size(config.x509Key) == 0)
+        if (az_span_size(config.x509Cert_filename) == 0 || az_span_size(config.x509Key_filename) == 0)
         {
             printf("Connection specifies X509 authentication but certificate or key was not passed\n");
             return 4;
         }
         else
         {
-            // Parse x509 client certificate and key here
+            if (0 != read_private_key(az_span_ptr(config.x509Key_filename), config.x509pk))
+            {
+                printf("Unable to parse private key\n");
+                return 4;
+            }
+
+            if (0 <= (config.x509cert_count = read_certificates_string(az_span_ptr(config.x509Cert_filename), &config.x509cert)))
+            {
+                printf("Unable to parse device certificate\n");
+                return 4;
+            }
         }
     }
 

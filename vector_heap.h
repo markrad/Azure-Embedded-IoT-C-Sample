@@ -10,6 +10,9 @@ typedef void* VECTORHANDLE;
 // Create a new vector on the private heap
 VECTORHANDLE vector_create(HEAPHANDLE hheap, uint16_t element_size);
 
+// Wraps an existing buffer
+VECTORHANDLE vector_wrap(HEAPHANDLE hheap, void *in, uint16_t element_size, uint16_t count);
+
 // Append a new entry to the end of the vector
 int vector_append(VECTORHANDLE hvector, void* new_element);
 
