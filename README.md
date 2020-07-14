@@ -1,7 +1,7 @@
 # Azure-Embedded-IoT-C-Sample
 This is a sample application built using the [Azure Embedded C SDK](https://github.com/Azure/azure-sdk-for-c) to connect and interact with an Azure IoT hub. Currently this is a work in progress with some missing features. 
 ## Implemented
-- Generate a valid SAS token from a connection string
+- Authenticate with either a SAS token or an X.509 certificate
 - Connect to the IoT hub
 - Send Telemetry to the IoT hub
 - Receive C2D messages from the IoT hub (but just prints them out)
@@ -27,9 +27,12 @@ This code is currently only designed to run on Linux. Briefly you will need to:
 
 For more detailed build instructions, you will find the entire process encapsulated in the dockerfile contained within. This will build everything above and can be used as is or as a guide to complete the steps at your console.
 ## Running the Application
-You will need to provide at least two and optionally three environment variables in order to run the application. These are:
-- **AZ_IOT_CONNECTION_STRING** The connection string for the device you wish to connect
-- **AZ_IOT_DEVICE_X509_TRUST_PEM_FILE** The filename of the PEM format certificates that will be used to validate the server's certificate. This is the trusted root certificate.
-- **AZ_IOT_DEVICE_SAS_TTL** Optionally the SAS token time to live value in seconds. This will default to 3600 if omitted.
+The application configures itself from values provided in the environment. There are:
+- **AZ_IOT_CONNECTION_STRING** _Required_: The connection string for the device you wish to connect. If this contains x509=true then you must also provide _AZ_IOT_DEVICE_X509_CLIENT_PEM_FILE_ and _AZ_IOT_DEVICE_X509_CLIENT_KEY_FILE_ as described below.
+- **AZ_IOT_DEVICE_X509_TRUST_PEM_FILE** _Required_: The filename of the PEM format certificates that will be used to validate the server's certificate. This is the trusted root certificate.
+- **AZ_IOT_DEVICE_SAS_TTL** _Optional_: The SAS token time to live value in seconds. This will default to 3600 if omitted.
+- **AZ_IOT_DEVICE_X509_CLIENT_PEM_FILE** _Required when using X.509 authentication_: An X.509 certificate file name that contains the client's certificate for authentication.
+- **AZ_IOT_DEVICE_X509_CLIENT_KEY_FILE** _Required when using X.509 authentication_: The X.509 private key file name for the above. 
 ## To do
 - Review and improve error handling
+- Review memory usage in X.509 validation
