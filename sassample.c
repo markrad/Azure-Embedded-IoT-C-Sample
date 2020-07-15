@@ -95,9 +95,10 @@ typedef struct
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
 
-HEAPHANDLE hHeap = NULL;            /** Global heap pointer */
+HEAPHANDLE hHeap = NULL;                        /** Global heap pointer */
 
-volatile bool noctrlc = true;       /** Global so signal trap can request graceful termination */
+volatile bool noctrlc = true;                   /** Global so signal trap can request graceful termination */
+volatile bool initial_twin_complete = false;    /** Don't start until we've checked the twin for settings */
 
 static az_result read_configuration_entry(
         const char* name,
@@ -836,6 +837,8 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
                         publish_user->interval = reported_interval;
                     }
                 }
+
+                initial_twin_complete = true;
             }
 
             break;
@@ -1314,6 +1317,12 @@ int main()
     if (0 != (rc = request_twin(&client, &mqttclient)))
     {
         printf("Failed to request twin: %d\n", rc);
+    }
+
+    while (!initial_twin_complete)
+    {
+        mqtt_sync(&mqttclient);
+        az_platform_sleep_msec(100);
     }
 
     print_heap_info();
