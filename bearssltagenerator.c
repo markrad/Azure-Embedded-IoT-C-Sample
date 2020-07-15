@@ -18,45 +18,6 @@ typedef struct {
 } buffer_head;
 
 /**
- * @brief Reads the entire file into a heap allocated buffer. The caller is
- * responsilbe for freeing this buffer.
- * 
- * @param file_name[in] The file to read
- * 
- * @returns az_span containing file contents or NULL if failed
- */
-static az_span read_file(const char *file_name)
-{
-    FILE *f = fopen(file_name, "rb");
-
-    if (f == NULL)
-    {
-        printf("Cannot open file %s\n", file_name);
-        return AZ_SPAN_NULL;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    az_span content = az_heap_alloc(hHeap, fsize);
-
-    if (az_span_ptr(content) == NULL)
-        return AZ_SPAN_NULL;
-
-    long read = fread(az_span_ptr(content), 1, fsize, f);
-    
-    fclose(f);
-
-    if (read != fsize) {
-        az_heap_free(hHeap, content);
-        return AZ_SPAN_NULL;
-    }
-
-    return content;
-}
-
-/**
  * @brief Callback function to accumulate data in a buffer
  */ 
 static void vblob_append(void *cc, const void *data, size_t len);
@@ -100,16 +61,17 @@ static void vblob_append(void *cc, const void *data, size_t len)
     }
 }
 
-VECTORHANDLE decode_pem(const void *src, size_t len)
+VECTORHANDLE decode_pem(const char *filename)
 {
     VECTORHANDLE pem_list;
 	br_pem_decoder_context pc;
 	pem_object po;
-	const unsigned char *buf;
     buffer_head bv;
 	int inobj;
-	int extra_nl;
     size_t i;
+    FILE *f;
+    char input[1];
+    bool error = false;
 
     pem_list = vector_create(hHeap, sizeof(pem_object));
 
@@ -117,80 +79,89 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 	{
 		printf("Unable to allocate vector to decode PEM\n");
 	}
+    else if (NULL == (f = fopen(filename, "rb")))
+    {
+        printf("Unable to open PEM file\n");
+        error = true;
+    }
 	else
 	{
 		br_pem_decoder_init(&pc);
-		buf = src;
 		inobj = 0;
 		po.name = NULL;
 		po.data = NULL;
 		po.data_len = 0;
-		extra_nl = 1;
 
-		while (len > 0) {
-			size_t tlen;
-			tlen = br_pem_decoder_push(&pc, buf, len);
-			buf += tlen;
-			len -= tlen;
-			switch (br_pem_decoder_event(&pc)) {
+		while (!error) 
+        {
+            if (feof(f))
+            {
+                // If the PEM file was missing the last newline this will push it to the decoder
+                if (input[0] != '\n')
+                    input[0] = '\n';
+                else
+                {
+                    fclose(f);
+                    break;
+                }
+            }
+            else
+            {
+                fread(input, 1, 1, f);
+            }
+			
+            if (0 == br_pem_decoder_push(&pc, input, 1))
+            {
+                switch (br_pem_decoder_event(&pc)) 
+                {
+                case BR_PEM_BEGIN_OBJ:
+                    inobj = 1;
 
-			case BR_PEM_BEGIN_OBJ:
-				inobj = 1;
-
-                if (NULL == (po.name = heapMalloc(hHeap, strlen(br_pem_decoder_name(&pc)) + 1)))
-				{
-					printf("Unable to allocate memory for certificate name\n");
-					break;
-				}
-
-                strcpy(po.name, br_pem_decoder_name(&pc));
-                bv.buffer = NULL;
-                bv.buffer_length = 0;
-                bv.data_length = 0;
-                bv.error = false;
-				br_pem_decoder_setdest(&pc, vblob_append, &bv);
-				break;
-
-			case BR_PEM_END_OBJ:
-				if (inobj)
-				{
-                    if (bv.error == true)
+                    if (NULL == (po.name = heapMalloc(hHeap, strlen(br_pem_decoder_name(&pc)) + 1)))
                     {
-                        printf("Out of memory decoding pem data\n");
+                        printf("Unable to allocate memory for certificate name\n");
                         break;
                     }
 
-					po.data = bv.buffer;
-					po.data_len = bv.data_length;
-                    vector_append(pem_list, &po);
-					po.name = NULL;
-					po.data = NULL;
-					po.data_len = 0;
-					inobj = 0;
-				}
-				break;
+                    strcpy(po.name, br_pem_decoder_name(&pc));
+                    bv.buffer = NULL;
+                    bv.buffer_length = 0;
+                    bv.data_length = 0;
+                    bv.error = false;
+                    br_pem_decoder_setdest(&pc, vblob_append, &bv);
+                    break;
 
-			case BR_PEM_ERROR:
-				printf("ERROR: invalid PEM encoding\n");
-				inobj = 1;
-				break;
-			}
+                case BR_PEM_END_OBJ:
+                    if (inobj)
+                    {
+                        if (bv.error == true)
+                        {
+                            printf("Out of memory decoding pem data\n");
+                            break;
+                        }
 
-			/*
-			 * We add an extra newline at the end, in order to
-			 * support PEM files that lack the newline on their last
-			 * line (this is somewhat invalid, but PEM format is not
-			 * standardised and such files do exist in the wild, so
-			 * we'd better accept them).
-			 */
-			if (len == 0 && extra_nl) {
-				extra_nl = 0;
-				buf = (const unsigned char *)"\n";
-				len = 1;
-			}
+                        po.data = bv.buffer;
+                        po.data_len = bv.data_length;
+                        vector_append(pem_list, &po);
+                        po.name = NULL;
+                        po.data = NULL;
+                        po.data_len = 0;
+                        inobj = 0;
+                    }
+                    break;
+
+                case BR_PEM_ERROR:
+                    printf("ERROR: invalid PEM encoding\n");
+                    inobj = 1;
+                    error = true;
+                    break;
+                }
+
+                br_pem_decoder_push(&pc, input, 1);
+            }
 		}
 
-		if (inobj)
+		if (inobj || error)
 		{
 			printf("Unable to decode pem\n");
 
@@ -220,14 +191,6 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
     static const int CERTIFICATE_LEN = sizeof(CERTIFICATE) - 1;
     static const int X509_CERTIFICATE_LEN = sizeof(X509_CERTIFICATE) - 1;
 
-    az_span content = read_file(certs_filename);
-
-    if (az_span_ptr(content) == NULL)
-    {
-        printf("Failed to read X.509 certificate\n");
-        return -1;
-    }
-
     cert_list = vector_create(hHeap, sizeof(br_x509_certificate));
 
     if (cert_list == NULL)
@@ -237,7 +200,7 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
     }
     else
     {
-        pem_list = decode_pem(az_span_ptr(content), az_span_size(content));
+        pem_list = decode_pem(certs_filename);
         
         if (pem_list == NULL) 
         {
@@ -302,8 +265,6 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
             }
         }
     }
-
-    az_heap_free(hHeap, content);
 
     if (result >= 0)
     {
@@ -453,20 +414,11 @@ int read_private_key(const char *key_file, private_key **priv_key)
     static const int EC_PRIVATE_KEY_LENGTH = sizeof(EC_PRIVATE_KEY) - 1;
     static const int PRIVATE_KEY_LENGTH = sizeof(PRIVATE_KEY) - 1;
 
-    az_span buf = read_file(key_file);
-
-    if (az_span_ptr(buf) == NULL)
-    {
-        printf("Out of heap space\n");
-        return -1;
-    }
-
     VECTORHANDLE pos;  // vector of pem_object
 	pem_object *work;
     size_t u;
 
-	pos = decode_pem(az_span_ptr(buf), az_span_size(buf));
-    az_heap_free(hHeap, buf);
+	pos = decode_pem(key_file);
 		
     if (pos != NULL) 
     {

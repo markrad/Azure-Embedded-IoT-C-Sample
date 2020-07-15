@@ -91,7 +91,7 @@ typedef struct
 } PUBLISH_USER;
 
 // Buffer size constants
-#define HEAP_LENGTH 1024 * 18
+#define HEAP_LENGTH 1024 * 12
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
 
@@ -1129,11 +1129,11 @@ static void print_heap_info()
 int main()
 {
     printf("Azure SDK for C IoT device sample: V%s\n\n", VERSION);
-    // All memory required is defined here
+    // All memory required is defined here (will be allocated in bss on Linux)
     static uint8_t heap[HEAP_LENGTH];                       // Block of memory used by private heap functions
     static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI];      // Buffer for TLS library
-    static uint8_t mqtt_sendbuf[2048];                      // Send buffer for MQTT library
-    static uint8_t mqtt_recvbuf[1024];                      // Receive buffer for MQTT library
+    static uint8_t mqtt_sendbuf[MQTT_SENDBUF_LENGTH];       // Send buffer for MQTT library
+    static uint8_t mqtt_recvbuf[MQTT_RECVBUF_LENGTH];       // Receive buffer for MQTT library
 
     CONFIGURATION config;
     int rc;
