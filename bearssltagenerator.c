@@ -105,7 +105,6 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
     VECTORHANDLE pem_list;
 	br_pem_decoder_context pc;
 	pem_object po;
-    //pem_object *pos;
 	const unsigned char *buf;
     buffer_head bv;
 	int inobj;
@@ -116,7 +115,7 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 
 	if (pem_list == NULL)
 	{
-		printf("Unable to allocate vectore to decode PEM\n");
+		printf("Unable to allocate vector to decode PEM\n");
 	}
 	else
 	{
@@ -210,7 +209,7 @@ VECTORHANDLE decode_pem(const void *src, size_t len)
 	return pem_list;
 }
 
-int read_certificates_string(const char *certs_filename, br_x509_certificate **certs) //const char *buf, size_t len)
+int read_certificates_string(const char *certs_filename, br_x509_certificate **certs)
 {
 	VECTORHANDLE cert_list; 
     VECTORHANDLE pem_list;
@@ -592,7 +591,7 @@ static int certificate_to_trust_anchor(br_x509_certificate *xc, br_x509_trust_an
     return result;
 }
 
-void free_certificates(br_x509_certificate *certs, size_t num)
+static void free_certificates(br_x509_certificate *certs, size_t num)
 {
 	size_t u;
 

@@ -91,7 +91,7 @@ typedef struct
 } PUBLISH_USER;
 
 // Buffer size constants
-#define HEAP_LENGTH 1024 * 24
+#define HEAP_LENGTH 1024 * 18
 #define MQTT_SENDBUF_LENGTH 1024
 #define MQTT_RECVBUF_LENGTH 1024
 
@@ -130,8 +130,9 @@ static az_result getPassword(az_iot_hub_client *client,
         size_t *mqtt_password_out_length);
 static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient);
 static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime);
-void precondition_failure_callback();
-void log_func(az_log_classification classification, az_span message);
+static void precondition_failure_callback();
+static void log_func(az_log_classification classification, az_span message);
+static void print_heap_info();
 
 /**
  * @brief Read option value from environment
@@ -1087,7 +1088,7 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
 /**
  * @brief Called when precondition fails. Prints a message and crashes the program;
  */
-void precondition_failure_callback()
+static void precondition_failure_callback()
 {
     printf("Precondition failed\n");
 
@@ -1102,12 +1103,15 @@ void precondition_failure_callback()
  * @param classification[in]: Severity of the message
  * @param message[in]: The message content
  */
-void log_func(az_log_classification classification, az_span message)
+static void log_func(az_log_classification classification, az_span message)
 {
    printf("%.*s\n", az_span_size(message), az_span_ptr(message));
 }
 
-void print_heap_info()
+/**
+ * @brief Prints the current private heap statistics
+ */
+static void print_heap_info()
 {
     HEAPINFO hi;
 
@@ -1134,6 +1138,9 @@ int main()
     // Initialize private heap
     hHeap = heapInit(heap, HEAP_LENGTH);
 
+    // Optionally set up an alternative precondition failure callback
+    az_precondition_failed_set_callback(precondition_failure_callback);
+
     // Read the configuration from the environment
     if (az_failed(rc = read_configuration_and_init_client(&config)))
     {
@@ -1148,12 +1155,18 @@ int main()
         return 4;
     }
 
+    az_heap_free(hHeap, config.trustedRootCert_filename);
+    config.trustedRootCert_filename = AZ_SPAN_NULL;
+
     // Parse the connection string
     if (az_failed(rc = split_connection_string(&config)))
     {
         printf("Failed to parse connection string - make sure it is a device connection string - %d\n", rc);
         return rc;
     }
+
+    az_heap_free(hHeap, config.connectionString);
+    config.connectionString = AZ_SPAN_NULL;
 
     if (config.usingX509 == true)
     {
@@ -1175,6 +1188,11 @@ int main()
                 printf("Unable to parse device certificate\n");
                 return 4;
             }
+
+            az_heap_free(hHeap, config.x509Key_filename);
+            config.x509Key_filename = AZ_SPAN_NULL;
+            az_heap_free(hHeap, config.x509Cert_filename);
+            config.x509Cert_filename = AZ_SPAN_NULL;
         }
     }
     else
@@ -1192,6 +1210,9 @@ int main()
         printf("Failed to initialize client - %d\n", rc);
         return rc;
     }
+
+    az_heap_free(hHeap, config.deviceId);
+    config.deviceId = AZ_SPAN_NULL;
 
     size_t outLength;
 
@@ -1256,9 +1277,6 @@ int main()
     mqtt_topic = heapRealloc(hHeap, mqtt_topic, outLength + 1);
     printf("\t         Topic: %s\n", mqtt_topic);
 
-    // Optionally set up an alternative precondition failure callback
-    az_precondition_failed_set_callback(precondition_failure_callback);
-
     // Optionally set up a logger
     az_log_set_callback(log_func);
 
@@ -1297,6 +1315,8 @@ int main()
     {
         printf("Failed to request twin: %d\n", rc);
     }
+
+    print_heap_info();
 
     printf("\nSending telemtry at interval %d - press CTRL-C to exit\n\n", publish_user.interval);
 
