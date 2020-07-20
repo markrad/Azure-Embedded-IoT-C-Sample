@@ -914,8 +914,6 @@ static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClien
     // Publish the twin document request. This will trigger the service to send back the twin document
     // for this device. The response is handled in the on_received function.
     mqtt_publish(mqttClient, twin_topic, NULL, 0, 0);
-    mqtt_sync(mqttClient);
-    mqtt_sync(mqttClient);
 
     if (mqttClient->error != MQTT_OK)
     {
