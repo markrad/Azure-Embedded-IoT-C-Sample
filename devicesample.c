@@ -1,5 +1,5 @@
 /**
- * @file sassample.c
+ * @file devicesample.c
  * 
  * @brief Example of an application that uses the Embedded IoT C library. This example avoids using any of the 
  * libraries used by the examples in the below GitHub repository. 
