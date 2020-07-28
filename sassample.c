@@ -7,7 +7,7 @@
  * For MQTT it uses MQTT-C https://github.com/LiamBindle/MQTT-C
  * For TLS it used BearSSL: https://bearssl.org
  * 
- * Currently only supports SAS authentication
+ * Supports either SAS token or X.509 authentication depending upon the content of the connection string
  * 
  * Application requires at least two and optional three environment variables to be set prior to running:
  *    AZ_IOT_CONNECTION_STRING:               Set to the device's connection string
@@ -1128,10 +1128,10 @@ int main()
 {
     printf("Azure SDK for C IoT device sample: V%s\n\n", VERSION);
     // All memory required is defined here (will be allocated in bss on Linux)
-    static uint8_t heap[HEAP_LENGTH];                       // Block of memory used by private heap functions
-    static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI];      // Buffer for TLS library
-    static uint8_t mqtt_sendbuf[MQTT_SENDBUF_LENGTH];       // Send buffer for MQTT library
-    static uint8_t mqtt_recvbuf[MQTT_RECVBUF_LENGTH];       // Receive buffer for MQTT library
+    static uint8_t heap[HEAP_LENGTH] __attribute__((aligned));                       // Block of memory used by private heap functions
+    static uint8_t bearssl_iobuf[BR_SSL_BUFSIZE_BIDI] __attribute__((aligned));      // Buffer for TLS library
+    static uint8_t mqtt_sendbuf[MQTT_SENDBUF_LENGTH] __attribute__((aligned));       // Send buffer for MQTT library
+    static uint8_t mqtt_recvbuf[MQTT_RECVBUF_LENGTH] __attribute__((aligned));       // Receive buffer for MQTT library
 
     CONFIGURATION config;
     int rc;
