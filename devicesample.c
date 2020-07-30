@@ -134,6 +134,8 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
 static void precondition_failure_callback();
 static void log_func(az_log_classification classification, az_span message);
 static void print_heap_info();
+static az_result json_find_property(az_json_reader *jr, az_span property);
+static az_result json_find_path(az_json_reader *jr, az_span path);
 
 /**
  * @brief Read option value from environment
@@ -385,6 +387,95 @@ static void print_az_span(const char *leader, const az_span buffer)
 }
 
 /**
+ * @brief Finds a property at the same level in the heirarchy as the starting pointer
+ * 
+ * @param jr[in,out] Starting location in JSON on input, points to the property's value on output
+ * @param property[in] Property to search for
+ * 
+ * @returns AZ_OK if found otherwise an error
+ */
+az_result json_find_property(az_json_reader *jr, az_span property)
+{
+    az_result result;
+    char property_name[32];
+    int32_t property_name_length;
+
+    if (az_span_ptr(property) == NULL || az_span_size(property) == 0 || jr == NULL)
+    {
+        return AZ_ERROR_ARG;
+    }
+
+    AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+
+    while (jr->token.kind != AZ_JSON_TOKEN_END_OBJECT)
+    {
+        if (jr->token.kind == AZ_JSON_TOKEN_PROPERTY_NAME)
+        {
+            AZ_RETURN_IF_FAILED(az_json_token_get_string(&jr->token, property_name, sizeof(property_name), &property_name_length));
+            property_name[property_name_length] = '\0';
+            printf("Property = %s\n", property_name);
+
+            if (az_json_token_is_text_equal(&jr->token, property))
+            {
+                AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+                return AZ_OK;
+            }
+            else
+            {
+                AZ_RETURN_IF_FAILED(az_json_reader_skip_children(jr));
+            }
+        }
+
+        AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+    }
+
+    return AZ_ERROR_EOF;
+}
+
+/**
+ * @brief Searches JSON for a specific property
+ * 
+ * @param jr[in, out] az_json_reader containing starting place and returns pointing to property's value
+ * @param path[in] path to search in the format of leve1/level2/target
+ * 
+ * @returns AZ_OK or error value
+ */
+az_result json_find_path(az_json_reader *jr, az_span path)
+{
+    if (az_span_ptr(path) == NULL || az_span_size(path) == 0 || jr == NULL)
+    {
+        return AZ_ERROR_ARG;
+    }
+
+    uint8_t *walk = az_span_ptr(path);
+    uint8_t *start = az_span_ptr(path);
+
+    while (az_span_size(path) + 1 != walk - az_span_ptr(path) )
+    {
+        if (*walk == '/' || az_span_size(path) == walk - az_span_ptr(path))
+        {
+            if (walk - start == 0)
+            {
+                return AZ_ERROR_ARG;
+            }
+
+            AZ_RETURN_IF_FAILED(json_find_property(jr, az_span_init(start, walk - start)));
+
+            if (az_span_size(path) != walk - az_span_ptr(path) && jr->token.kind != AZ_JSON_TOKEN_BEGIN_OBJECT)
+            {
+                return AZ_ERROR_ITEM_NOT_FOUND;
+            }
+
+            start = walk + 1;
+        }
+
+        walk++;
+    }
+
+    return AZ_OK;
+}
+
+/**
  * @brief A quick and dirty URL decoder. Decoding is done in place. Only works
  * with ASCII.
  * 
@@ -460,45 +551,53 @@ static void signalHandler(int signum)
  */
 static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    az_json_parser json_parser;
-    bool error = false;
-    az_result result;
-    az_json_token out_token;
-    char workArea[256];
+    az_json_reader jr;
+    bool error = true;
+    //az_result result;
+    char workArea[80];
+    char response[128];
+    char publish_topic[256];
     size_t out_topic_length;
-    double out_value;
+    uint32_t out_value;
+    az_span desired_property_name = AZ_SPAN_LITERAL_FROM_STR("value");
 
-    result = az_json_parse_by_pointer(payload, AZ_SPAN_FROM_STR("/value"), &out_token);
-
-    if (!az_failed(result) && out_token.kind == AZ_JSON_TOKEN_NUMBER && !az_failed(az_json_token_get_number(&out_token, &out_value)))
+    if (az_failed(az_json_reader_init(&jr, payload, NULL)))
     {
-        int work = round(out_value);
-
-        if (work < 1 || work > 120)
+        strcpy(workArea, "Invalid JSON");
+        error = true;
+    }
+    else
+    {
+        if (az_failed(json_find_property(&jr, desired_property_name)))
         {
-            printf("New interval of %d is out of range\n", work);
+            strcpy(workArea, "property value not found");
             error = true;
         }
         else
         {
-            publish_user->interval = work;
-            printf("Interval modifed to %d\n", publish_user->interval);
-            report_property(publish_user);
+            if (az_failed(az_json_token_get_uint32(&jr.token, &out_value)) || out_value < 1 || out_value > 120)
+            {
+                strcpy(workArea, "property value is invalid or out of range");
+                error = true;
+            }
+            else 
+            {
+                publish_user->interval = out_value;
+                printf("Interval modifed to %d\n", publish_user->interval);
+                report_property(publish_user);
+                error = false;
+            }
         }
     }
-    else
-    {
-        printf("Invalid JSON\n");
-        error = true;
-    }
-    
+        
     if (!error)
     {
         if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
-            publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, workArea, sizeof(workArea), &out_topic_length)))
+            publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, publish_topic, sizeof(publish_topic), &out_topic_length)))
         {
-            char response[] = "{ \"response\": \"success\" }";
-            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+            strcpy(response, "{ \"response\": \"success\" }");
+
+            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, publish_topic, response, strlen(response), 0))
             {
                 printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
             }
@@ -507,10 +606,12 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
     else
     {
         if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
-            publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, workArea, sizeof(workArea), &out_topic_length)))
+            publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, publish_topic, sizeof(publish_topic), &out_topic_length)))
         {
-            char response[] = "{ \"response\": \"error\", \"message\": \"Interval is out of range\" }";
-            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+            printf("%s\n", workArea);
+            sprintf(response, "{ \"response\": \"error\", \"message\": \"%s\" }", workArea);
+
+            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, publish_topic, response, strlen(response), 0))
             {
                 printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
             }
@@ -604,15 +705,15 @@ static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *
 {
     static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
 
-    az_json_builder builder;
+    az_json_writer builder;
 
-    AZ_RETURN_IF_FAILED(az_json_builder_init(&builder, *payload_out, NULL));
-    AZ_RETURN_IF_FAILED(az_json_builder_append_begin_object(&builder));
-    AZ_RETURN_IF_FAILED(az_json_builder_append_property_name(&builder, reported_property_name));
-    AZ_RETURN_IF_FAILED(az_json_builder_append_int32_number(&builder, publish_user->interval));
-    AZ_RETURN_IF_FAILED(az_json_builder_append_end_object(&builder));
+    AZ_RETURN_IF_FAILED(az_json_writer_init(&builder, *payload_out, NULL));
+    AZ_RETURN_IF_FAILED(az_json_writer_append_begin_object(&builder));
+    AZ_RETURN_IF_FAILED(az_json_writer_append_property_name(&builder, reported_property_name));
+    AZ_RETURN_IF_FAILED(az_json_writer_append_int32(&builder, publish_user->interval));
+    AZ_RETURN_IF_FAILED(az_json_writer_append_end_object(&builder));
 
-    *payload_out = az_json_builder_get_json(&builder);
+    *payload_out = az_json_writer_get_json(&builder);
 
     return AZ_OK;
 }
@@ -686,30 +787,17 @@ static int report_property(PUBLISH_USER *publish_user)
  */
 static az_result update_property(PUBLISH_USER *publish_user, az_span desired_payload)
 {
-    static az_span version_name = AZ_SPAN_LITERAL_FROM_STR("$version");
+    //static az_span version_name = AZ_SPAN_LITERAL_FROM_STR("$version");
     static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
     
-    az_json_parser parser;
-    az_json_token token;
-    az_json_token_member token_member;
+    az_json_reader jr;
+    uint32_t reported_value;
 
-    AZ_RETURN_IF_FAILED(az_json_parser_init(&parser, desired_payload));
-    AZ_RETURN_IF_FAILED(az_json_parser_parse_token(&parser, &token));
-    AZ_RETURN_IF_FAILED(az_json_parser_parse_token_member(&parser, &token_member));
-
-    while (!az_span_is_content_equal(token_member.name, version_name))
-    {
-        if (az_span_is_content_equal(token_member.name, reported_property_name))
-        {
-            double property_value = 5.0;
-
-            AZ_RETURN_IF_FAILED(az_json_token_get_number(&token_member.token, &property_value));
-            publish_user->interval = (uint8_t)property_value;
-            printf("Updating %.*s\" to %d\n", az_span_size(reported_property_name), az_span_ptr(reported_property_name), publish_user->interval);
-        }
-
-        AZ_RETURN_IF_FAILED(az_json_parser_parse_token_member(&parser, &token_member));
-    }
+    AZ_RETURN_IF_FAILED(az_json_reader_init(&jr, desired_payload, NULL));
+    AZ_RETURN_IF_FAILED(json_find_property(&jr, reported_property_name));
+    AZ_RETURN_IF_FAILED(az_json_token_get_uint32(&jr.token, &reported_value));
+    publish_user->interval = reported_value;
+    printf("Updating %.*s\" to %d\n", az_span_size(reported_property_name), az_span_ptr(reported_property_name), publish_user->interval);
 }
 
 /**
@@ -733,9 +821,8 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     az_iot_hub_client_method_request method_request;
     az_iot_hub_client_twin_response twin_response;
     az_pair out;
-    az_json_token out_token;
     az_result az_r;
-    double out_value;
+    uint32_t out_value;
     int desired_interval;
     int reported_interval;
 
@@ -762,6 +849,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
                 print_az_span("                             value: ", out.value);
             }
         }
+        print_az_span("Message: ", az_span_init(published->application_message, published->application_message_size));
     }
     else if (AZ_OK == az_iot_hub_client_methods_parse_received_topic(publish_user->client, in_topic, &method_request))
     {
@@ -808,33 +896,43 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
 
             if (twin_response.status == AZ_IOT_STATUS_OK)
             {
-                az_r = az_json_parse_by_pointer(az_span_init((uint8_t *)published->application_message, published->application_message_size), AZ_SPAN_FROM_STR("/desired/interval"), &out_token);
+                az_json_reader jr;
 
-                if (!az_failed(az_r) && out_token.kind == AZ_JSON_TOKEN_NUMBER && !az_failed(az_json_token_get_number(&out_token, &out_value)))
+                if (!az_failed(az_json_reader_init(&jr, az_span_init((uint8_t *)published->application_message, published->application_message_size), NULL)))
                 {
-                    int desired_interval = round(out_value);
+                    az_span path = AZ_SPAN_LITERAL_FROM_STR("desired/interval");
 
-                    if (desired_interval < 1 || desired_interval > 120)
+                    if (!az_failed(json_find_path(&jr, path)))
                     {
-                        printf("Desired interval of %d is out of range\n", desired_interval);
+                        if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value) && out_value > 0 && out_value < 120))
+                        {
+                            publish_user->interval = out_value;
+                            report_property(publish_user);
+                        }
+                        else
+                        {
+                            printf("Value for interval is either invalid or out of range\n");
+                        }
                     }
                     else
                     {
-                        if (publish_user->interval != desired_interval)
+                        if (!az_failed(az_json_reader_init(&jr, az_span_init((uint8_t *)published->application_message, published->application_message_size), NULL)))
                         {
-                            publish_user->interval = desired_interval;
-                            report_property(publish_user);
-                        }
-                    }
-                }
-                else
-                {
-                    az_r = az_json_parse_by_pointer(az_span_init((uint8_t *)published->application_message, published->application_message_size), AZ_SPAN_FROM_STR("/reported/interval"), &out_token);
+                            az_span path = AZ_SPAN_LITERAL_FROM_STR("reported/interval");
 
-                    if (!az_failed(az_r) && !az_failed(az_json_token_get_number(&out_token, &out_value)))
-                    {
-                        reported_interval = round(out_value);
-                        publish_user->interval = reported_interval;
+                            if (!az_failed(json_find_path(&jr, path)))
+                            {
+                                if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value) && out_value > 0 && out_value < 120))
+                                {
+                                    publish_user->interval = desired_interval;
+                                    report_property(publish_user);
+                                }
+                                else
+                                {
+                                    printf("Value for interval is either invalid or out of range\n");
+                                }
+                            }
+                        }
                     }
                 }
 
