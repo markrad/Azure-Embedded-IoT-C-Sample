@@ -713,7 +713,7 @@ static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *
     AZ_RETURN_IF_FAILED(az_json_writer_append_int32(&builder, publish_user->interval));
     AZ_RETURN_IF_FAILED(az_json_writer_append_end_object(&builder));
 
-    *payload_out = az_json_writer_get_json(&builder);
+    *payload_out = az_json_writer_get_bytes_used_in_destination(&builder);
 
     return AZ_OK;
 }
@@ -849,7 +849,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
                 print_az_span("                             value: ", out.value);
             }
         }
-        print_az_span("Message: ", az_span_init(published->application_message, published->application_message_size));
+        print_az_span("Message: ", az_span_init((uint8_t *)published->application_message, published->application_message_size));
     }
     else if (AZ_OK == az_iot_hub_client_methods_parse_received_topic(publish_user->client, in_topic, &method_request))
     {
@@ -922,14 +922,20 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
 
                             if (!az_failed(json_find_path(&jr, path)))
                             {
-                                if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value) && out_value > 0 && out_value < 120))
+                                if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value)))
                                 {
-                                    publish_user->interval = desired_interval;
+                                    if (out_value == 0 || out_value > 120)
+                                    {
+                                        printf("New interval value %d is out of range - set to 120\n", (int)out_value);
+                                        out_value = 120;
+                                    }
+                                    
+                                    publish_user->interval = out_value;
                                     report_property(publish_user);
                                 }
                                 else
                                 {
-                                    printf("Value for interval is either invalid or out of range\n");
+                                    printf("Value for interval is invalid\n");
                                 }
                             }
                         }
