@@ -30,7 +30,7 @@ RUN cp -v ../include/*.h /usr/local/include
 
 # Acquire and build Azure SDK for C libraries
 WORKDIR /build
-RUN git clone https://github.com/azure/azure-sdk-for-c.git
+RUN git clone --branch azure-sdk-for-c_1.0.0-preview.3 https://github.com/azure/azure-sdk-for-c.git
 WORKDIR /build/azure-sdk-for-c
 RUN mkdir build
 WORKDIR /build/azure-sdk-for-c/build

@@ -60,6 +60,7 @@
  */ 
 typedef struct 
 {
+    az_iot_hub_client *client;
     az_span connectionString;
     az_span trustedRootCert_filename;
     az_span x509Cert_filename;
@@ -70,13 +71,19 @@ typedef struct
     az_span sharedAccessKey;
     az_span decodedSAK;
     br_x509_certificate *x509cert;
+    long expiry_time;
     int x509cert_count;
     private_key *x509pk;
     char *client_id;
     char *user_id;
+    uint8_t *mqtt_sendbuff;
+    uint8_t *mqtt_recvbuff;
+    size_t mqtt_sendbuff_length;    
+    size_t mqtt_recvbuff_length;
     bearssl_context ctx;
     uint32_t sas_ttl;
     bool usingX509;
+    bool connected;
 } CONFIGURATION;
 
 /**
@@ -713,7 +720,7 @@ static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *
     AZ_RETURN_IF_FAILED(az_json_writer_append_int32(&builder, publish_user->interval));
     AZ_RETURN_IF_FAILED(az_json_writer_append_end_object(&builder));
 
-    *payload_out = az_json_writer_get_bytes_used_in_destination(&builder);
+    *payload_out = az_json_writer_get_json(&builder);
 
     return AZ_OK;
 }
@@ -1190,6 +1197,72 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     return mqtt_client->error == MQTT_OK? 0 : -2;
 }
 
+static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_user)
+{
+    CONFIGURATION *config = *((CONFIGURATION **)reconnect_user);
+    int64_t start;
+    int attempt = 0;
+    int rc = -1;
+
+    if (mqttClient->error != MQTT_ERROR_INITIAL_RECONNECT)
+    {
+        close_socket(&config->ctx);
+    }
+
+    while (rc != 0)
+    {
+        start = az_platform_clock_msec();
+        printf("Connection attempt %d\n", attempt + 1);
+
+        if (0 != (rc = open_nb_socket(&config->ctx, az_span_ptr(config->hostname), az_span_ptr(config->port))))
+        {
+            if (rc == -1)
+            {
+                az_platform_sleep_msec(az_iot_retry_calc_delay((int)(az_platform_clock_msec() - start), ++attempt, 1000, 20 * 60 * 1000, (rand() % 5000)));
+            }
+            else
+            {
+                // Unrecoverable error
+                printf("Unable to open socket: Unrecoverable error\n");
+                return;
+            }
+        }
+    }
+    // Get the MQTT password
+    size_t mqtt_password_length = 256;
+    char *mqtt_password = heapMalloc(hHeap, 256);
+
+    if (config->usingX509 == false)
+    {
+        config->expiry_time = time(NULL) + config->sas_ttl;
+
+        if (AZ_OK != (rc = getPassword(config->client, config->decodedSAK, config->expiry_time, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+        {
+            printf("Failed to generate MQTT password: %d\n", rc);
+            return;
+        }
+    }
+    else
+    {
+        config->expiry_time = 0;
+        mqtt_password = NULL;
+    }
+
+    mqtt_reinit(mqttClient, &config->ctx, config->mqtt_sendbuff, config->mqtt_sendbuff_length, config->mqtt_recvbuff, config->mqtt_recvbuff_length);
+
+    // Code just assumes MQTT connect will be ok if socket connected - failure is considered terminal
+    mqtt_connect(mqttClient, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
+    heapFree(hHeap, mqtt_password);
+    topic_subscribe(mqttClient);
+    config->connected = true;
+    //mqtt_sync(mqtt_client);
+
+    // if (mqttClient->error != MQTT_OK)
+    // {
+    //     printf("Failed to connect to MQTT broker: %s\n", mqtt_error_str(mqtt_client->error));
+    // }
+}
+
 /**
  * @brief Called when precondition fails. Prints a message and crashes the program;
  */
@@ -1392,23 +1465,26 @@ int main()
         return 4;
     }
 
+    config.mqtt_sendbuff = mqtt_sendbuf;
+    config.mqtt_sendbuff_length = MQTT_SENDBUF_LENGTH;
+    config.mqtt_recvbuff = mqtt_recvbuf;
+    config.mqtt_recvbuff_length = MQTT_RECVBUF_LENGTH;
+    config.client = &client;
+
     // Setup the MQTT client 
     struct mqtt_client mqttclient;
 
     PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
 
-    mqtt_init(&mqttclient, &config.ctx, mqtt_sendbuf, MQTT_SENDBUF_LENGTH, mqtt_recvbuf, MQTT_RECVBUF_LENGTH, publish_callback);
+    //mqtt_init(&mqttclient, &config.ctx, mqtt_sendbuf, MQTT_SENDBUF_LENGTH, mqtt_recvbuf, MQTT_RECVBUF_LENGTH, publish_callback);
     mqttclient.publish_response_callback_state = &publish_user;
+    mqtt_init_reconnect(&mqttclient, reconnect_callback, &config, publish_callback);
 
     // open the non-blocking TCP socket (connecting to the broker)
     signal(SIGPIPE, SIG_IGN);
 
-    long expiryTime;
-
-    if (0 != (rc = server_connect(&config, &client, &mqttclient, false, &expiryTime)))
-    {
-        return -4;
-    }
+    // Call sync to force connection
+    mqtt_sync(&mqttclient);
 
     char msg[300];
     int counter = 49;
@@ -1435,14 +1511,16 @@ int main()
     while (publish_user.run && noctrlc)
     {
         // Check for SAS token about to expire and refresh
-        if (config.usingX509 == false && expiryTime - time(NULL) < (config.sas_ttl * 80 / 100))
+        if (config.connected == true && config.usingX509 == false && config.expiry_time - time(NULL) < (config.sas_ttl * 80 / 100))
         {
             // Need to regenerate a SAS token
             printf("Reaunthenticating\n");
-            if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &expiryTime)))
-            {
-                return -4;
-            }
+            config.connected = false;
+            mqtt_disconnect(&mqttclient);
+            // if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &config.expiry_time)))
+            // {
+            //     return -4;
+            // }
         }
 
         if (++counter % (publish_user.interval * 10) == 0) 
@@ -1457,22 +1535,22 @@ int main()
         // Push and pull the data
         mqtt_sync(&mqttclient);
 
-        if (mqttclient.error != MQTT_OK)
-        {
-            if (mqttclient.error == MQTT_ERROR_SOCKET_ERROR)
-            {
-                printf("Connection failed - retrying\n");
+        // if (mqttclient.error != MQTT_OK)
+        // {
+        //     if (mqttclient.error == MQTT_ERROR_SOCKET_ERROR)
+        //     {
+        //         printf("Connection failed - retrying\n");
 
-                if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &expiryTime)))
-                {
-                    return -4;
-                }
-            }
-            else
-            {
-                printf("Unrecoverable MQTT error: %s\n", mqtt_error_str(mqttclient.error));
-            }
-        }
+        //         if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &config.expiry_time)))
+        //         {
+        //             return -4;
+        //         }
+        //     }
+        //     else
+        //     {
+        //         printf("Unrecoverable MQTT error: %s\n", mqtt_error_str(mqttclient.error));
+        //     }
+        // }
 
         az_platform_sleep_msec(100);
     }
