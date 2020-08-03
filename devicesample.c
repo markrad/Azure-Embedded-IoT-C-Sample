@@ -9,10 +9,12 @@
  * 
  * Supports either SAS token or X.509 authentication depending upon the content of the connection string
  * 
- * Application requires at least two and optional three environment variables to be set prior to running:
- *    AZ_IOT_CONNECTION_STRING:               Set to the device's connection string
- *    AZ_IOT_DEVICE_X509_TRUST_PEM_FILE:      Path to the file containing the trusted root certificate in order to validate the server's certificate
- *    AZ_IOT_DEVICE_SAS_TTL:                  Optional time to live in seconds for SAS token - defaults to 3600 seconds
+ * Application requires various environment variables depending upon if SAS Token or X.509 authenticatin is used
+ *    AZ_IOT_CONNECTION_STRING:               Always required. Set to the device's connection string
+ *    AZ_IOT_DEVICE_X509_TRUST_PEM_FILE:      Always required. Path to the file containing the trusted root certificate in order to validate the server's certificate
+ *    AZ_IOT_DEVICE_SAS_TTL:                  Optional, applicable to SAS authentication only. Time to live in seconds for SAS token - defaults to 3600 seconds
+ *    AZ_IOT_DEVICE_X509_CLIENT_PEM_FILE:     Required for X.509 authentication. File name of client's certficate in PEM format
+ *    AZ_IOT_DEVICE_X509_CLIENT_KEY_FILE:     Required for X.509 authentication. File name of client's private key in PEM format
  * 
  * @remark Find information about the Embedded C library at https://github.com/azure//azure-sdk-for-c
  * 
@@ -1181,7 +1183,6 @@ static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, stru
     {
         mqtt_password = NULL;
     }
-    
 
     // Code just assumes MQTT connect will be ok if socker it connected - failure is considered terminal
     mqtt_connect(mqtt_client, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
@@ -1255,12 +1256,6 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
     heapFree(hHeap, mqtt_password);
     topic_subscribe(mqttClient);
     config->connected = true;
-    //mqtt_sync(mqtt_client);
-
-    // if (mqttClient->error != MQTT_OK)
-    // {
-    //     printf("Failed to connect to MQTT broker: %s\n", mqtt_error_str(mqtt_client->error));
-    // }
 }
 
 /**
@@ -1377,7 +1372,6 @@ int main()
     {
         config.x509pk = NULL;
     }
-    
 
     az_iot_hub_client client;
     az_iot_hub_client_options options = az_iot_hub_client_options_default();
@@ -1476,11 +1470,10 @@ int main()
 
     PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
 
-    //mqtt_init(&mqttclient, &config.ctx, mqtt_sendbuf, MQTT_SENDBUF_LENGTH, mqtt_recvbuf, MQTT_RECVBUF_LENGTH, publish_callback);
     mqttclient.publish_response_callback_state = &publish_user;
     mqtt_init_reconnect(&mqttclient, reconnect_callback, &config, publish_callback);
 
-    // open the non-blocking TCP socket (connecting to the broker)
+    // Handle SIGPIPE without interrupt
     signal(SIGPIPE, SIG_IGN);
 
     // Call sync to force connection
@@ -1516,14 +1509,10 @@ int main()
             // Need to regenerate a SAS token
             printf("Reaunthenticating\n");
             config.connected = false;
-            mqtt_disconnect(&mqttclient);
-            // if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &config.expiry_time)))
-            // {
-            //     return -4;
-            // }
+            mqtt_reconnect(&mqttclient);
         }
 
-        if (++counter % (publish_user.interval * 10) == 0) 
+        if (mqttclient.error == MQTT_OK && ++counter % (publish_user.interval * 10) == 0) 
         {
             // Send some telemetry
             counter = 0;
@@ -1534,24 +1523,6 @@ int main()
 
         // Push and pull the data
         mqtt_sync(&mqttclient);
-
-        // if (mqttclient.error != MQTT_OK)
-        // {
-        //     if (mqttclient.error == MQTT_ERROR_SOCKET_ERROR)
-        //     {
-        //         printf("Connection failed - retrying\n");
-
-        //         if (0 != (rc = server_connect(&config, &client, &mqttclient, true, &config.expiry_time)))
-        //         {
-        //             return -4;
-        //         }
-        //     }
-        //     else
-        //     {
-        //         printf("Unrecoverable MQTT error: %s\n", mqtt_error_str(mqttclient.error));
-        //     }
-        // }
-
         az_platform_sleep_msec(100);
     }
 
