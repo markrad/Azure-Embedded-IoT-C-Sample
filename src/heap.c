@@ -41,7 +41,7 @@ static void heap_insert_into_free_list(HEAPHANDLE hHead, MEMORYBLOCK mb);
 static void heap_insert_after(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem);
 static void heap_remove_from_list(HEAPHANDLE hHeap, MEMORYBLOCK mb);
 static int heap_get_is_adjacent(MEMORYBLOCK first, MEMORYBLOCK second);
-static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength);
+static void* heap_truncate(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 static void* heap_extend(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 
 // Initialize the heap structures
@@ -204,7 +204,7 @@ void* heap_realloc(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 			MEMORYBLOCK mb = heap_get_MB(address);
 
 			return mb->length > newLength
-				? heapTruncate(hHeap, address, newLength)
+				? heap_truncate(hHeap, address, newLength)
 				: mb->length < newLength
 				? heap_extend(hHeap, address, newLength)
 				: address;
@@ -216,7 +216,7 @@ void* heap_realloc(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 	}
 }
 
-static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength)
+static void* heap_truncate(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 {
 	HHEAP h = (HHEAP)hHeap;
 	void* result = address;
