@@ -59,3 +59,7 @@ build/
 
 # No X509 device certificates or keys
 x509certs/
+
+# No VS Code Counter
+.VSCodeCounter/
+.vs/
