@@ -422,7 +422,6 @@ az_result json_find_property(az_json_reader *jr, az_span property)
         {
             AZ_RETURN_IF_FAILED(az_json_token_get_string(&jr->token, property_name, sizeof(property_name), &property_name_length));
             property_name[property_name_length] = '\0';
-            printf("Property = %s\n", property_name);
 
             if (az_json_token_is_text_equal(&jr->token, property))
             {
