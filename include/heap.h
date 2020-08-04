@@ -16,22 +16,22 @@ typedef struct _HEAPINFO
 } HEAPINFO;
 
 // Initialize the private heap with buffer or bufferLen bytes
-HEAPHANDLE heapInit(uint8_t *buffer, size_t bufferLen);
+HEAPHANDLE heap_init(uint8_t *buffer, size_t bufferLen);
 
 // Allocate memory bytes from the private heap
-void* heapMalloc(HEAPHANDLE hHeap, size_t bytes);
+void* heap_malloc(HEAPHANDLE hHeap, size_t bytes);
 
 // Free the memoary at address from the priate heap
-void heapFree(HEAPHANDLE hHeap, void* address);
+void heap_free(HEAPHANDLE hHeap, void* address);
 
 // Reallocate memory at address for new length newLength
-void* heapRealloc(HEAPHANDLE hHeap, void* address, uint16_t newLength);
+void* heap_realloc(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 
 // Get information about the heap state in heapInfo
-void heapGetInfo(HEAPHANDLE hHeap, HEAPINFO *heapInfo);
+void heap_get_info(HEAPHANDLE hHeap, HEAPINFO *heapInfo);
 
 #ifdef _DEBUG_HEAP
-void heapSanity(HEAPHANDLE hHeap);
-int heapCheck(HEAPHANDLE hHeap);
+void heap_sanity(HEAPHANDLE hHeap);
+int heap_check(HEAPHANDLE hHeap);
 #endif
 

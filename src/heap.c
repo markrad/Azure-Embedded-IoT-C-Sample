@@ -3,8 +3,8 @@
 #ifdef _DEBUG_HEAP
 #include <stdio.h>
 
-#define _DEBUG_HEAP_SANITY(HEAP) (heapSanity(HEAP));
-#define _DEBUG_HEAP_CHECK(HEAP) (heapCheck(HEAP))
+#define _DEBUG_HEAP_SANITY(HEAP) (heap_sanity(HEAP));
+#define _DEBUG_HEAP_CHECK(HEAP) (heap_check(HEAP))
 #else
 #define _DEBUG_HEAP_SANITY(HEAP) (0)
 #define _DEBUG_HEAP_CHECK(HEAP) (0)
@@ -30,22 +30,22 @@ typedef struct _HEAPHANDLE
 	MEMORYBLOCKSTRUCT usedList;
 } HHEAPSTRUCT, * HHEAP;
 
-static MEMORYBLOCK heapGetFreeList(HEAPHANDLE hHeap);
-static MEMORYBLOCK heapGetUsedList(HEAPHANDLE hHeap);
-static uint16_t heapGetOffset(HEAPHANDLE hHeap, MEMORYBLOCK mb);
-static MEMORYBLOCK heapGetNextAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
-static MEMORYBLOCK heapGetPreviousAddress(HEAPHANDLE hHead, MEMORYBLOCK mb);
-static MEMORYBLOCK heapGetMB(uint8_t* address);
-static uint8_t* heapGetData(MEMORYBLOCK mb);
-static void heapInsertIntoFreeList(HEAPHANDLE hHead, MEMORYBLOCK mb);
-static void heapInsertAfter(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem);
-static void heapRemoveFromList(HEAPHANDLE hHeap, MEMORYBLOCK mb);
-static int heapGetIsAdjacent(MEMORYBLOCK first, MEMORYBLOCK second);
+static MEMORYBLOCK heap_get_free_list(HEAPHANDLE hHeap);
+static MEMORYBLOCK heap_get_used_list(HEAPHANDLE hHeap);
+static uint16_t heap_get_offset(HEAPHANDLE hHeap, MEMORYBLOCK mb);
+static MEMORYBLOCK heap_get_next_address(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static MEMORYBLOCK heap_get_previous_address(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static MEMORYBLOCK heap_get_MB(uint8_t* address);
+static uint8_t* heap_get_data(MEMORYBLOCK mb);
+static void heap_insert_into_free_list(HEAPHANDLE hHead, MEMORYBLOCK mb);
+static void heap_insert_after(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem);
+static void heap_remove_from_list(HEAPHANDLE hHeap, MEMORYBLOCK mb);
+static int heap_get_is_adjacent(MEMORYBLOCK first, MEMORYBLOCK second);
 static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength);
-static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength);
+static void* heap_extend(HEAPHANDLE hHeap, void* address, uint16_t newLength);
 
 // Initialize the heap structures
-HEAPHANDLE heapInit(uint8_t *buffer, size_t bufferLen)
+HEAPHANDLE heap_init(uint8_t *buffer, size_t bufferLen)
 {
 	if (buffer == NULL || bufferLen < MIN_BUFFER || bufferLen > MAX_BUFFER)
 		return NULL;
@@ -63,7 +63,7 @@ HEAPHANDLE heapInit(uint8_t *buffer, size_t bufferLen)
 	hHeap->freeList.next = (uint16_t)sizeof(HHEAPSTRUCT);
 	hHeap->freeList.previous = CHAIN_END;
 
-	MEMORYBLOCK first = heapGetNextAddress(hHeap, &hHeap->freeList);
+	MEMORYBLOCK first = heap_get_next_address(hHeap, &hHeap->freeList);
 
 	first->length = (uint16_t)(bufferLen - sizeof(HHEAPSTRUCT) - sizeof(MEMORYBLOCKSTRUCT));
 	first->next = CHAIN_END;
@@ -75,7 +75,7 @@ HEAPHANDLE heapInit(uint8_t *buffer, size_t bufferLen)
 }
 
 // Allocate a block
-void* heapMalloc(HEAPHANDLE hHeap, size_t bytes)
+void* heap_malloc(HEAPHANDLE hHeap, size_t bytes)
 {
 	HHEAP h = (HHEAP)hHeap;
 
@@ -89,9 +89,9 @@ void* heapMalloc(HEAPHANDLE hHeap, size_t bytes)
 		if (bytes < MIN_ALLOC - sizeof(MEMORYBLOCKSTRUCT))
 			bytes = MIN_ALLOC - sizeof(MEMORYBLOCKSTRUCT);
 
-		MEMORYBLOCK mb = heapGetFreeList(hHeap);
+		MEMORYBLOCK mb = heap_get_free_list(hHeap);
 
-		while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+		while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 		{
 			if (mb->length > bytes)
 				break;
@@ -101,13 +101,13 @@ void* heapMalloc(HEAPHANDLE hHeap, size_t bytes)
 		{
 			if (mb->length - bytes > MIN_ALLOC)
 			{
-				MEMORYBLOCK add = (MEMORYBLOCK)(heapGetData(mb) + bytes);
+				MEMORYBLOCK add = (MEMORYBLOCK)(heap_get_data(mb) + bytes);
 				add->next = mb->next;
 				add->previous = mb->previous;
-				heapGetPreviousAddress(hHeap, mb)->next = heapGetOffset(hHeap, add);
+				heap_get_previous_address(hHeap, mb)->next = heap_get_offset(hHeap, add);
 
 				if (add->next != CHAIN_END)
-					heapGetNextAddress(hHeap, add)->previous = heapGetOffset(hHeap, add);
+					heap_get_next_address(hHeap, add)->previous = heap_get_offset(hHeap, add);
 
 				add->length = mb->length - sizeof(MEMORYBLOCKSTRUCT) - (uint16_t)bytes;
 				mb->length = (uint16_t)bytes;
@@ -123,14 +123,14 @@ void* heapMalloc(HEAPHANDLE hHeap, size_t bytes)
 				}
 				#endif
 
-				heapRemoveFromList(hHeap, mb);
+				heap_remove_from_list(hHeap, mb);
 				h->freeList.length--;
 			}
 
-			heapInsertAfter(hHeap, heapGetUsedList(hHeap), mb);
+			heap_insert_after(hHeap, heap_get_used_list(hHeap), mb);
 			h->usedList.length++;
 
-			result = heapGetData(mb);
+			result = heap_get_data(mb);
 		}
 	}
 
@@ -140,23 +140,23 @@ void* heapMalloc(HEAPHANDLE hHeap, size_t bytes)
 }
 
 // Free an allocated block
-void heapFree(HEAPHANDLE hHeap, void* address)
+void heap_free(HEAPHANDLE hHeap, void* address)
 {
 	HHEAP h = (HHEAP)hHeap;
 
 	if (hHeap != NULL && address != NULL)
 	{
-		MEMORYBLOCK mb = heapGetMB(address);
+		MEMORYBLOCK mb = heap_get_MB(address);
 
-		heapRemoveFromList(hHeap, mb);
+		heap_remove_from_list(hHeap, mb);
 		h->usedList.length--;
 
-		MEMORYBLOCK search = heapGetFreeList(hHeap);
-		search = heapGetNextAddress(hHeap, search);
+		MEMORYBLOCK search = heap_get_free_list(hHeap);
+		search = heap_get_next_address(hHeap, search);
 
 		while (search != NULL)
 		{
-			int adj = heapGetIsAdjacent(search, mb);
+			int adj = heap_get_is_adjacent(search, mb);
 
 			switch (adj)
 			{
@@ -166,47 +166,47 @@ void heapFree(HEAPHANDLE hHeap, void* address)
 				// Is before freed entry - add search to current
 				search->length += (mb->length + sizeof(MEMORYBLOCKSTRUCT));
 				mb = search;
-				heapRemoveFromList(hHeap, mb);
+				heap_remove_from_list(hHeap, mb);
 				h->freeList.length--;
-				search = heapGetFreeList(hHeap);
+				search = heap_get_free_list(hHeap);
 				break;
 			case 1:
 				// Is after freed entry - add current to search
-				heapRemoveFromList(hHeap, search);
+				heap_remove_from_list(hHeap, search);
 				h->freeList.length--;
 				mb->length += (search->length + sizeof(MEMORYBLOCKSTRUCT));
-				search = heapGetFreeList(hHeap);
+				search = heap_get_free_list(hHeap);
 				break;
 			default:
 				break;
 			}
 
-			search = heapGetNextAddress(hHeap, search);
+			search = heap_get_next_address(hHeap, search);
 		}
 
-		heapInsertIntoFreeList(hHeap, mb);
+		heap_insert_into_free_list(hHeap, mb);
 		h->freeList.length++;
 	}
 
 	_DEBUG_HEAP_SANITY(hHeap);
 }
 
-void* heapRealloc(HEAPHANDLE hHeap, void* address, uint16_t newLength)
+void* heap_realloc(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 {
 	if (hHeap != NULL)
 	{
 		if (address == NULL)
 		{
-			return heapMalloc(hHeap, newLength);
+			return heap_malloc(hHeap, newLength);
 		}
 		else
 		{
-			MEMORYBLOCK mb = heapGetMB(address);
+			MEMORYBLOCK mb = heap_get_MB(address);
 
 			return mb->length > newLength
 				? heapTruncate(hHeap, address, newLength)
 				: mb->length < newLength
-				? heapExtend(hHeap, address, newLength)
+				? heap_extend(hHeap, address, newLength)
 				: address;
 		}
 	}
@@ -225,27 +225,27 @@ static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 	{
 		if (newLength == 0)
 		{
-			heapFree(hHeap, address);
+			heap_free(hHeap, address);
 		}
 		else
 		{
 			if (newLength % 2 != 0)
 				newLength += 1;
 
-			MEMORYBLOCK mb = heapGetMB(address);
+			MEMORYBLOCK mb = heap_get_MB(address);
 
 			if (newLength < mb->length)
 			{
 				result = address;
 
-				MEMORYBLOCK search = heapGetNextAddress(hHeap, heapGetFreeList(hHeap));
+				MEMORYBLOCK search = heap_get_next_address(hHeap, heap_get_free_list(hHeap));
 
 				while (search != NULL)
 				{
-					if (1 == heapGetIsAdjacent(search, mb))
+					if (1 == heap_get_is_adjacent(search, mb))
 						break;
 
-					search = heapGetNextAddress(hHeap, search);
+					search = heap_get_next_address(hHeap, search);
 				}
 
 				if (search != NULL || mb->length - newLength > MIN_ALLOC)
@@ -264,12 +264,12 @@ static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 							x = x / y;
 						}
 #endif
-						heapRemoveFromList(hHeap, search);
+						heap_remove_from_list(hHeap, search);
 						h->freeList.length--;
 						trailer->length += (search->length + sizeof(MEMORYBLOCKSTRUCT));
 					}
 
-					heapInsertIntoFreeList(hHeap, trailer);
+					heap_insert_into_free_list(hHeap, trailer);
 					h->freeList.length++;
 				}
 			}
@@ -281,7 +281,7 @@ static void* heapTruncate(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 	return result;
 }
 
-static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
+static void* heap_extend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 {
 	HHEAP h = (HHEAP)hHeap;
 	void* result = address;
@@ -291,18 +291,18 @@ static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 		if (newLength % 2 != 0)
 			newLength += 1;
 
-		MEMORYBLOCK mb = heapGetMB(address);
+		MEMORYBLOCK mb = heap_get_MB(address);
 
 		if (newLength > mb->length)
 		{
-			MEMORYBLOCK search = heapGetNextAddress(hHeap, heapGetFreeList(hHeap));
+			MEMORYBLOCK search = heap_get_next_address(hHeap, heap_get_free_list(hHeap));
 
 			while (search != NULL)
 			{
-				if (1 == heapGetIsAdjacent(search, mb))
+				if (1 == heap_get_is_adjacent(search, mb))
 					break;
 
-				search = heapGetNextAddress(hHeap, search);
+				search = heap_get_next_address(hHeap, search);
 			}
 
 			if (search != NULL && search->length + sizeof(MEMORYBLOCKSTRUCT) >= newLength - mb->length)
@@ -316,10 +316,10 @@ static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 					x = x / y;
 				}
 #endif
-				heapRemoveFromList(hHeap, search);
+				heap_remove_from_list(hHeap, search);
 				h->freeList.length--;
 
-				MEMORYBLOCK newFree = (MEMORYBLOCK)(heapGetData(mb) + newLength);
+				MEMORYBLOCK newFree = (MEMORYBLOCK)(heap_get_data(mb) + newLength);
 
 				newFree->length = search->length - (newLength - mb->length);
 				mb->length = newLength;
@@ -334,19 +334,19 @@ static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 					x = x / y;
 				}
 #endif
-					heapInsertIntoFreeList(hHeap, newFree);
+					heap_insert_into_free_list(hHeap, newFree);
 					h->freeList.length++;
 					result = address;
 				}
 			}
 			else
 			{
-				result = heapMalloc(hHeap, newLength);
+				result = heap_malloc(hHeap, newLength);
 
 				if (result != NULL)
 				{
-					memcpy(result, heapGetData(mb), mb->length);
-					heapFree(hHeap, heapGetData(mb));
+					memcpy(result, heap_get_data(mb), mb->length);
+					heap_free(hHeap, heap_get_data(mb));
 				}
 			}
 		}
@@ -357,23 +357,23 @@ static void* heapExtend(HEAPHANDLE hHeap, void* address, uint16_t newLength)
 	return result;
 }
 
-void heapGetInfo(HEAPHANDLE hHeap, HEAPINFO *heapInfo)
+void heap_get_info(HEAPHANDLE hHeap, HEAPINFO *heapInfo)
 {
 	MEMORYBLOCK mb;
 
 	memset(heapInfo, 0, sizeof(HEAPINFO));
 
-	mb = heapGetUsedList(hHeap);
+	mb = heap_get_used_list(hHeap);
 	
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		heapInfo->totalBytes += mb->length + sizeof(MEMORYBLOCKSTRUCT);
 		heapInfo->usedBytes += mb->length;
 	}
 
-	mb = heapGetFreeList(hHeap);
+	mb = heap_get_free_list(hHeap);
 
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		heapInfo->totalBytes += mb->length + sizeof(MEMORYBLOCKSTRUCT);
 		heapInfo->freeBytes += mb->length;
@@ -384,7 +384,7 @@ void heapGetInfo(HEAPHANDLE hHeap, HEAPINFO *heapInfo)
 }
 
 #ifdef _DEBUG_HEAP
-void heapSanity(HEAPHANDLE hHeap)
+void heap_sanity(HEAPHANDLE hHeap)
 {
 	HHEAP h = (HHEAP)hHeap;
 	MEMORYBLOCK mb;
@@ -401,34 +401,34 @@ void heapSanity(HEAPHANDLE hHeap)
 
 	printf("\r\nUsed list\r\n\n");
 
-	mb = heapGetUsedList(hHeap);
+	mb = heap_get_used_list(hHeap);
 	cnt = 0;
 	
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		if (++cnt > h->usedList.length)
 		{
 			printf("heap is broken - used list counts do not agree\n");
 			return;
 		}
-		printf("offset=%d;next=%d;previous=%d;length=%d\r\n", heapGetOffset(hHeap, mb), mb->next, mb->previous, mb->length);
+		printf("offset=%d;next=%d;previous=%d;length=%d\r\n", heap_get_offset(hHeap, mb), mb->next, mb->previous, mb->length);
 		totalBytes += mb->length + sizeof(MEMORYBLOCKSTRUCT);
 		usedBytes += mb->length;
 	}
 
 	printf("\r\nFree list\r\n\n");
 
-	mb = heapGetFreeList(hHeap);
+	mb = heap_get_free_list(hHeap);
 	cnt = 0;
 
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		if (++cnt > h->freeList.length)
 		{
 			printf("heap is broken - used list counts do not agree\n");
 			return;
 		}
-		printf("offset=%d;next=%d;previous=%d;length=%d\r\n", heapGetOffset(hHeap, mb), mb->next, mb->previous, mb->length);
+		printf("offset=%d;next=%d;previous=%d;length=%d\r\n", heap_get_offset(hHeap, mb), mb->next, mb->previous, mb->length);
 		totalBytes += mb->length + sizeof(MEMORYBLOCKSTRUCT);
 		freeBytes += mb->length;
 
@@ -446,16 +446,16 @@ void heapSanity(HEAPHANDLE hHeap)
 	printf("least ever free bytes = %05d\n", leastFreeBytes);
 }
 
-int heapCheck(HEAPHANDLE hHeap)
+int heap_check(HEAPHANDLE hHeap)
 {
 	HHEAP h = (HHEAP)hHeap;
 	MEMORYBLOCK mb;
 	int cnt;
 
-	mb = heapGetUsedList(hHeap);
+	mb = heap_get_used_list(hHeap);
 	cnt = 0;
 	
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		if (++cnt > h->usedList.length)
 		{
@@ -464,10 +464,10 @@ int heapCheck(HEAPHANDLE hHeap)
 		}
 	}
 
-	mb = heapGetFreeList(hHeap);
+	mb = heap_get_free_list(hHeap);
 	cnt = 0;
 
-	while (NULL != (mb = heapGetNextAddress(hHeap, mb)))
+	while (NULL != (mb = heap_get_next_address(hHeap, mb)))
 	{
 		if (++cnt > h->freeList.length)
 		{
@@ -481,27 +481,27 @@ int heapCheck(HEAPHANDLE hHeap)
 #endif
 
 // Insert the block into the free list sorted by length
-inline void heapInsertIntoFreeList(HEAPHANDLE hHeap, MEMORYBLOCK mb)
+inline void heap_insert_into_free_list(HEAPHANDLE hHeap, MEMORYBLOCK mb)
 {
 	MEMORYBLOCK target = NULL;
 
-	for (target = heapGetFreeList(hHeap);
-		NULL != heapGetNextAddress(hHeap, target) && heapGetNextAddress(hHeap, target)->length < mb->length;
-		target = heapGetNextAddress(hHeap, target))
+	for (target = heap_get_free_list(hHeap);
+		NULL != heap_get_next_address(hHeap, target) && heap_get_next_address(hHeap, target)->length < mb->length;
+		target = heap_get_next_address(hHeap, target))
 	{
 	}
 
-	heapInsertAfter(hHeap, target, mb);
+	heap_insert_after(hHeap, target, mb);
 }
 
 // Calculate the mb's offset in the buffer
-inline uint16_t heapGetOffset(HEAPHANDLE hHeap, MEMORYBLOCK mb)
+inline uint16_t heap_get_offset(HEAPHANDLE hHeap, MEMORYBLOCK mb)
 {
 	return (uint16_t)((uint8_t *)mb - (uint8_t *)hHeap);
 }
 
 // Return the next block
-inline MEMORYBLOCK heapGetNextAddress(HEAPHANDLE hHead, MEMORYBLOCK mb)
+inline MEMORYBLOCK heap_get_next_address(HEAPHANDLE hHead, MEMORYBLOCK mb)
 {
 	return mb->next != CHAIN_END
 		? (MEMORYBLOCK)((uint8_t *)hHead + mb->next) 
@@ -509,7 +509,7 @@ inline MEMORYBLOCK heapGetNextAddress(HEAPHANDLE hHead, MEMORYBLOCK mb)
 }
 
 // Return the previous block
-inline MEMORYBLOCK heapGetPreviousAddress(HEAPHANDLE hHead, MEMORYBLOCK mb)
+inline MEMORYBLOCK heap_get_previous_address(HEAPHANDLE hHead, MEMORYBLOCK mb)
 {
 	return mb->previous != CHAIN_END
 		? (MEMORYBLOCK)((uint8_t*)hHead + mb->previous)
@@ -517,61 +517,61 @@ inline MEMORYBLOCK heapGetPreviousAddress(HEAPHANDLE hHead, MEMORYBLOCK mb)
 }
 
 // Returns the memory block for the specified address
-inline MEMORYBLOCK heapGetMB(uint8_t *address)
+inline MEMORYBLOCK heap_get_MB(uint8_t *address)
 {
 	return (MEMORYBLOCK)(address - sizeof(MEMORYBLOCKSTRUCT));
 }
 
 // Returns a pointer to the data referenced by the offset
-inline uint8_t* heapGetData(MEMORYBLOCK mb)
+inline uint8_t* heap_get_data(MEMORYBLOCK mb)
 {
 	return (uint8_t*)((uint8_t*)mb + sizeof(MEMORYBLOCKSTRUCT));
 }
 
 // Returns the free list head
-inline MEMORYBLOCK heapGetFreeList(HEAPHANDLE hHeap)
+inline MEMORYBLOCK heap_get_free_list(HEAPHANDLE hHeap)
 {
 	return &(((HHEAP)hHeap)->freeList);
 }
 
 // Returns the used list head
-inline MEMORYBLOCK heapGetUsedList(HEAPHANDLE hHeap)
+inline MEMORYBLOCK heap_get_used_list(HEAPHANDLE hHeap)
 {
 	return &(((HHEAP)hHeap)->usedList);
 }
 
 // Insert newItem after target
-void heapInsertAfter(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem)
+void heap_insert_after(HEAPHANDLE hHeap, MEMORYBLOCK target, MEMORYBLOCK newItem)
 {
 #ifdef _DEBUG_HEAP
 	heapCheck(hHeap);
 #endif
 	newItem->next = target->next;
-	newItem->previous = heapGetOffset(hHeap, target);
-	target->next = heapGetOffset(hHeap, newItem);
+	newItem->previous = heap_get_offset(hHeap, target);
+	target->next = heap_get_offset(hHeap, newItem);
 
 	if (newItem->next != CHAIN_END)
-		heapGetNextAddress(hHeap, newItem)->previous = heapGetOffset(hHeap, newItem);
+		heap_get_next_address(hHeap, newItem)->previous = heap_get_offset(hHeap, newItem);
 }
 
 // Remove mb from the list within which it resides
-void heapRemoveFromList(HEAPHANDLE hHeap, MEMORYBLOCK mb)
+void heap_remove_from_list(HEAPHANDLE hHeap, MEMORYBLOCK mb)
 {
-	heapGetPreviousAddress(hHeap, mb)->next = mb->next;
+	heap_get_previous_address(hHeap, mb)->next = mb->next;
 
 	if (mb->next != CHAIN_END)
-		heapGetNextAddress(hHeap, mb)->previous = mb->previous;
+		heap_get_next_address(hHeap, mb)->previous = mb->previous;
 }
 
 // Returns:
 // -1 if first is adjacent and before second
 // 1 if second is adjacent and before first
 // 0 if they are not adacent to each other
-int heapGetIsAdjacent(MEMORYBLOCK first, MEMORYBLOCK second)
+int heap_get_is_adjacent(MEMORYBLOCK first, MEMORYBLOCK second)
 {
-	if (heapGetData(first) + first->length == (uint8_t *)second)
+	if (heap_get_data(first) + first->length == (uint8_t *)second)
 		return -1;
-	else if (heapGetData(second) + second->length == (uint8_t*)first)
+	else if (heap_get_data(second) + second->length == (uint8_t*)first)
 		return 1;
 	else
 		return 0;

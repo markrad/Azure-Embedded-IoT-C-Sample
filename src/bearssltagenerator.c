@@ -48,9 +48,9 @@ static void vblob_append(void *cc, const void *data, size_t len)
             uint8_t *save = bv->buffer;
             bv->buffer_length += 1024;                                          // Probably the most that will be allocated
 
-            if (NULL == (bv->buffer = heapRealloc(hHeap, bv->buffer, bv->buffer_length)))
+            if (NULL == (bv->buffer = heap_realloc(hHeap, bv->buffer, bv->buffer_length)))
             {
-                heapFree(hHeap, save);
+                heap_free(hHeap, save);
                 bv->error = true;
                 return;
             }
@@ -117,7 +117,7 @@ VECTORHANDLE decode_pem(const char *filename)
                 case BR_PEM_BEGIN_OBJ:
                     inobj = 1;
 
-                    if (NULL == (po.name = heapMalloc(hHeap, strlen(br_pem_decoder_name(&pc)) + 1)))
+                    if (NULL == (po.name = heap_malloc(hHeap, strlen(br_pem_decoder_name(&pc)) + 1)))
                     {
                         printf("Unable to allocate memory for certificate name\n");
                         break;
@@ -167,12 +167,12 @@ VECTORHANDLE decode_pem(const char *filename)
 
 			for (i = 0; i < vector_get_count(pem_list); i++)
 			{
-				heapFree(hHeap, ((pem_object *)vector_get(pem_list, i))->name);
-				heapFree(hHeap, ((pem_object *)vector_get(pem_list, i))->data);
+				heap_free(hHeap, ((pem_object *)vector_get(pem_list, i))->name);
+				heap_free(hHeap, ((pem_object *)vector_get(pem_list, i))->data);
 			}
 
 			vector_destroy(pem_list, false);
-			heapFree(hHeap, po.name);
+			heap_free(hHeap, po.name);
 			pem_list = NULL;
 		}
 	}
@@ -221,7 +221,7 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
                     xc.data_len = ((pem_object *)vector_get(pem_list, u))->data_len;
                     ((pem_object *)vector_get(pem_list, u))->data = NULL;
                     ((pem_object *)vector_get(pem_list, u))->data_len = 0;
-                    heapFree(hHeap, ((pem_object *)vector_get(pem_list, u))->name);
+                    heap_free(hHeap, ((pem_object *)vector_get(pem_list, u))->name);
                     ((pem_object *)vector_get(pem_list, u))->name = NULL;
 
                     result = vector_append(cert_list, &xc);
@@ -241,8 +241,8 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
             // If we enter this loop something failed
             for (; u < vector_get_count(pem_list); u++)
             {
-                heapFree(hHeap, ((pem_object *)vector_get(pem_list, u))->name);
-                heapFree(hHeap, ((pem_object *)vector_get(pem_list, u))->data);
+                heap_free(hHeap, ((pem_object *)vector_get(pem_list, u))->name);
+                heap_free(hHeap, ((pem_object *)vector_get(pem_list, u))->data);
             }
 
             vector_destroy(pem_list, false);
@@ -257,7 +257,7 @@ int read_certificates_string(const char *certs_filename, br_x509_certificate **c
             {
                 for (u = 0; u < vector_get_count(cert_list); u++)
                 {
-                    heapFree(hHeap, ((br_x509_certificate*)vector_get(cert_list, u))->data);
+                    heap_free(hHeap, ((br_x509_certificate*)vector_get(cert_list, u))->data);
                 }
 
                 vector_destroy(cert_list, false);
@@ -281,14 +281,14 @@ static void free_private_key(private_key *privkey)
     switch (privkey->key_type)
     {
     case BR_KEYTYPE_RSA:
-        heapFree(hHeap, privkey->key.rsa.iq);
-        heapFree(hHeap, privkey->key.rsa.dq);
-        heapFree(hHeap, privkey->key.rsa.dp);
-        heapFree(hHeap, privkey->key.rsa.q);
-        heapFree(hHeap, privkey->key.rsa.p);
+        heap_free(hHeap, privkey->key.rsa.iq);
+        heap_free(hHeap, privkey->key.rsa.dq);
+        heap_free(hHeap, privkey->key.rsa.dp);
+        heap_free(hHeap, privkey->key.rsa.q);
+        heap_free(hHeap, privkey->key.rsa.p);
         break;
     case BR_KEYTYPE_EC:
-        heapFree(hHeap, privkey->key.ec.x);
+        heap_free(hHeap, privkey->key.ec.x);
         break;
     default:
         printf("Unknown private key type %d\n", privkey->key_type);
@@ -321,7 +321,7 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
 
         case BR_KEYTYPE_RSA:
             rk = br_skey_decoder_get_rsa(&dc);
-            if (NULL == (sk = (private_key *)heapMalloc(hHeap, sizeof *sk)))
+            if (NULL == (sk = (private_key *)heap_malloc(hHeap, sizeof *sk)))
             {
                 printf("Failed to allocate memory for RSA key structure\n");
             }
@@ -330,11 +330,11 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
                 memset(sk, 0, sizeof(private_key));
 
                 if (
-                    NULL == (sk->key.rsa.p = (unsigned char *)heapMalloc(hHeap, rk->plen)) ||
-                    NULL == (sk->key.rsa.q = (unsigned char *)heapMalloc(hHeap, rk->plen)) ||
-                    NULL == (sk->key.rsa.dp = (unsigned char *)heapMalloc(hHeap, rk->plen)) ||
-                    NULL == (sk->key.rsa.dq = (unsigned char *)heapMalloc(hHeap, rk->plen)) ||
-                    NULL == (sk->key.rsa.iq = (unsigned char *)heapMalloc(hHeap, rk->plen))
+                    NULL == (sk->key.rsa.p = (unsigned char *)heap_malloc(hHeap, rk->plen)) ||
+                    NULL == (sk->key.rsa.q = (unsigned char *)heap_malloc(hHeap, rk->plen)) ||
+                    NULL == (sk->key.rsa.dp = (unsigned char *)heap_malloc(hHeap, rk->plen)) ||
+                    NULL == (sk->key.rsa.dq = (unsigned char *)heap_malloc(hHeap, rk->plen)) ||
+                    NULL == (sk->key.rsa.iq = (unsigned char *)heap_malloc(hHeap, rk->plen))
                     )
                 {
                     printf("Failed to allocate memory for RSA key structure\n");
@@ -361,7 +361,7 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
 
         case BR_KEYTYPE_EC:
             ek = br_skey_decoder_get_ec(&dc);
-            if (NULL == (sk = (private_key *)heapMalloc(hHeap, sizeof *sk)))
+            if (NULL == (sk = (private_key *)heap_malloc(hHeap, sizeof *sk)))
             {
                 printf("Failed to allocate memory for EC key structure\n");
             }
@@ -369,10 +369,10 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
             {
                 memset(sk, 0, sizeof(private_key));
 
-                if (NULL == (sk->key.ec.x = (unsigned char *)heapMalloc(hHeap, ek->xlen)))
+                if (NULL == (sk->key.ec.x = (unsigned char *)heap_malloc(hHeap, ek->xlen)))
                 {
                     printf("Failed to allocate memory for EC key structure\n");
-                    heapFree(hHeap, sk);
+                    heap_free(hHeap, sk);
                     sk = NULL;
                 }
                 else
@@ -388,7 +388,7 @@ static private_key *decode_key(const unsigned char *buf, size_t len)
                     {
                         printf("Private key curve (%d) is not supported\n", curve);
                         free_private_key(sk);
-                        heapFree(hHeap, sk);
+                        heap_free(hHeap, sk);
                         sk = NULL;
                     }
                 }
@@ -444,8 +444,8 @@ int read_private_key(const char *key_file, private_key **priv_key)
 
         for (u = 0; u < vector_get_count(pos); u++)
         {
-            heapFree(hHeap, ((pem_object *)vector_get(pos, u))->name);
-            heapFree(hHeap, ((pem_object *)vector_get(pos, u))->data);
+            heap_free(hHeap, ((pem_object *)vector_get(pos, u))->name);
+            heap_free(hHeap, ((pem_object *)vector_get(pos, u))->data);
         }
 
         vector_destroy(pos, false);
@@ -488,7 +488,7 @@ static int certificate_to_trust_anchor(br_x509_certificate *xc, br_x509_trust_an
         return -1;
     }
 
-    vdn.buffer = heapRealloc(hHeap, vdn.buffer, vdn.data_length);
+    vdn.buffer = heap_realloc(hHeap, vdn.buffer, vdn.data_length);
     ta->dn.data = vdn.buffer;
     ta->dn.len = vdn.data_length;
     ta->flags = 0;
@@ -505,8 +505,8 @@ static int certificate_to_trust_anchor(br_x509_certificate *xc, br_x509_trust_an
         ta->pkey.key.rsa.nlen = pk->key.rsa.nlen;
         ta->pkey.key.rsa.elen = pk->key.rsa.elen;
 
-        if (NULL == (ta->pkey.key.rsa.n = (unsigned char *)heapMalloc(hHeap, ta->pkey.key.rsa.nlen)) ||
-            NULL == ( ta->pkey.key.rsa.e = (unsigned char *)heapMalloc(hHeap, ta->pkey.key.rsa.elen)))
+        if (NULL == (ta->pkey.key.rsa.n = (unsigned char *)heap_malloc(hHeap, ta->pkey.key.rsa.nlen)) ||
+            NULL == ( ta->pkey.key.rsa.e = (unsigned char *)heap_malloc(hHeap, ta->pkey.key.rsa.elen)))
         {
             free_ta_contents(ta);
             return 0;
@@ -523,7 +523,7 @@ static int certificate_to_trust_anchor(br_x509_certificate *xc, br_x509_trust_an
         ta->pkey.key.ec.curve = pk->key.ec.curve;
         ta->pkey.key.ec.qlen = pk->key.ec.qlen;
 
-        if (NULL == (ta->pkey.key.ec.q = (unsigned char *)heapMalloc(hHeap, ta->pkey.key.ec.qlen)))
+        if (NULL == (ta->pkey.key.ec.q = (unsigned char *)heap_malloc(hHeap, ta->pkey.key.ec.qlen)))
         {
             free_ta_contents(ta);
             return 0;
@@ -548,7 +548,7 @@ static void free_certificates(br_x509_certificate *certs, size_t num)
 	size_t u;
 
 	for (u = 0; u < num; u ++) {
-		heapFree(hHeap, certs[u].data);
+		heap_free(hHeap, certs[u].data);
 	}
 }
 
@@ -575,7 +575,7 @@ size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[
     }
     else
     {
-        anchArray = (br_x509_trust_anchor *)heapMalloc(hHeap, sizeof(br_x509_trust_anchor) * num);
+        anchArray = (br_x509_trust_anchor *)heap_malloc(hHeap, sizeof(br_x509_trust_anchor) * num);
 
         if (anchArray == NULL)
         {
@@ -596,7 +596,7 @@ size_t get_trusted_anchors(const char *cert_file, br_x509_trust_anchor *anchOut[
                         free_ta_contents((anchOut[u]));
                     }
 
-                    heapFree(hHeap, anchArray);
+                    heap_free(hHeap, anchArray);
                     *anchOut = NULL;
                     num = 0;
                     break;
@@ -623,18 +623,18 @@ static void free_all_ta_contents(br_x509_trust_anchor *anch, int count)
 
 static void free_ta_contents(br_x509_trust_anchor *ta)
 {
-	heapFree(hHeap, ta->dn.data);
+	heap_free(hHeap, ta->dn.data);
 	switch (ta->pkey.key_type) 
     {
 	case BR_KEYTYPE_RSA:
-		heapFree(hHeap, ta->pkey.key.rsa.n);
-		heapFree(hHeap, ta->pkey.key.rsa.e);
+		heap_free(hHeap, ta->pkey.key.rsa.n);
+		heap_free(hHeap, ta->pkey.key.rsa.e);
 		break;
 	case BR_KEYTYPE_EC:
-		heapFree(hHeap, ta->pkey.key.ec.q);
+		heap_free(hHeap, ta->pkey.key.ec.q);
 		break;
 	}
 
-    heapFree(hHeap, ta);
+    heap_free(hHeap, ta);
 }
 

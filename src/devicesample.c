@@ -63,18 +63,18 @@
 typedef struct 
 {
     az_iot_hub_client *client;
-    az_span connectionString;
-    az_span trustedRootCert_filename;
-    az_span x509Cert_filename;
+    az_span connection_string;
+    az_span trusted_root_cert_filename;
+    az_span x509_cert_filename;
     az_span x509Key_filename;
     az_span hostname;
     az_span port;
-    az_span deviceId;
-    az_span sharedAccessKey;
-    az_span decodedSAK;
-    br_x509_certificate *x509cert;
+    az_span device_id;
+    az_span shared_access_key;
+    az_span decoded_SAK;
+    br_x509_certificate *x509_cert;
     long expiry_time;
-    int x509cert_count;
+    int x509_cert_count;
     private_key *x509pk;
     char *client_id;
     char *user_id;
@@ -84,7 +84,7 @@ typedef struct
     size_t mqtt_recvbuff_length;
     bearssl_context ctx;
     uint32_t sas_ttl;
-    bool usingX509;
+    bool using_X509;
     bool connected;
 } CONFIGURATION;
 
@@ -93,7 +93,7 @@ typedef struct
  */
 typedef struct 
 {
-    struct mqtt_client *mqttclient;
+    struct mqtt_client *mqtt_client;
     az_iot_hub_client *client;
     uint16_t interval;
     bool run;
@@ -121,7 +121,7 @@ static az_result split_connection_string(CONFIGURATION *configuration);
 static void print_array(const char *leader, const char *buffer, int buffer_len);
 static void print_az_span(const char *leader, const az_span buffer);
 static void url_decode_in_place(char *in);
-static void signalHandler(int signum);
+static void signal_handler(int signum);
 static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
 static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
 static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload);
@@ -132,14 +132,13 @@ static int report_property(PUBLISH_USER *publish_user);
 static az_result update_property(PUBLISH_USER *publish_user, az_span desired_payload);
 static void publish_callback(void** state, struct mqtt_response_publish *published);
 static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClient);
-static az_result getPassword(az_iot_hub_client *client, 
-        az_span decodedSAK, 
+static az_result get_password(az_iot_hub_client *client, 
+        az_span decoded_SAK, 
         long expiryTime, 
         char *mqtt_password, 
         size_t mqtt_password_length,
         size_t *mqtt_password_out_length);
-static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient);
-static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime);
+static enum MQTTErrors topic_subscribe(struct mqtt_client *mqtt_client);
 static void precondition_failure_callback();
 static void log_func(az_log_classification classification, az_span message);
 static void print_heap_info();
@@ -215,27 +214,27 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
 
     az_span work_span;
 
-    configuration->connectionString = az_heap_alloc(hHeap, 256);
+    configuration->connection_string = az_heap_alloc(hHeap, 256);
 
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, true, configuration->connectionString, &configuration->connectionString));
-    configuration->connectionString = az_heap_adjust(hHeap, configuration->connectionString);
+        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, true, configuration->connection_string, &configuration->connection_string));
+    configuration->connection_string = az_heap_adjust(hHeap, configuration->connection_string);
 
     // Not actually large enough to contain the maximum path but should do
-    configuration->trustedRootCert_filename = az_heap_alloc(hHeap, 1024);
+    configuration->trusted_root_cert_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trustedRootCert_filename, &configuration->trustedRootCert_filename));
-    configuration->trustedRootCert_filename = az_heap_adjust(hHeap, configuration->trustedRootCert_filename);
+        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trusted_root_cert_filename, &configuration->trusted_root_cert_filename));
+    configuration->trusted_root_cert_filename = az_heap_adjust(hHeap, configuration->trusted_root_cert_filename);
 
     work_span = az_heap_alloc(hHeap, 10);
 
     AZ_RETURN_IF_FAILED(read_configuration_entry(
         "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span));
 
-    configuration->x509Cert_filename = az_heap_alloc(hHeap, 1024);
+    configuration->x509_cert_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509Cert_filename, &configuration->x509Cert_filename));
-    configuration->x509Cert_filename = az_heap_adjust(hHeap, configuration->x509Cert_filename);
+        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509_cert_filename, &configuration->x509_cert_filename));
+    configuration->x509_cert_filename = az_heap_adjust(hHeap, configuration->x509_cert_filename);
 
     configuration->x509Key_filename = az_heap_alloc(hHeap, 1024);
     AZ_RETURN_IF_FAILED(read_configuration_entry(
@@ -260,18 +259,18 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
 static az_result split_connection_string(CONFIGURATION *configuration)
 {
     const char *HOSTNAME = "hostname";
-    const char *DEVICEID = "deviceid";
-    const char *SHAREDACCESSKEY = "sharedaccesskey";
+    const char *DEVICE_ID = "deviceid";
+    const char *SHARED_ACCESS_KEY = "sharedaccesskey";
     const char *X509 = "x509";
 
     static const char PORT[] = "8883";
 
     char buffer[256];
     bool inKeyword = true;
-    char *walker = az_span_ptr(configuration->connectionString);
+    char *walker = az_span_ptr(configuration->connection_string);
     char *out = buffer;
-    char *valueStart;
-    az_span *configPtr;
+    char *value_start;
+    az_span *config_ptr;
     az_span work;
     az_span x509_value = AZ_SPAN_NULL;
     bool x509;
@@ -280,9 +279,9 @@ static az_result split_connection_string(CONFIGURATION *configuration)
 
     configuration->hostname = AZ_SPAN_NULL;
     configuration->port = AZ_SPAN_NULL;
-    configuration->deviceId = AZ_SPAN_NULL;
-    configuration->sharedAccessKey = AZ_SPAN_NULL;
-    configuration->usingX509 = false;
+    configuration->device_id = AZ_SPAN_NULL;
+    configuration->shared_access_key = AZ_SPAN_NULL;
+    configuration->using_X509 = false;
 
     while (true)
     {
@@ -292,19 +291,19 @@ static az_result split_connection_string(CONFIGURATION *configuration)
             x509 = false;
             if (0 == strcmp(HOSTNAME, buffer))
             {
-                configPtr = &configuration->hostname;
+                config_ptr = &configuration->hostname;
             }
-            else if (0 == strcmp(DEVICEID, buffer))
+            else if (0 == strcmp(DEVICE_ID, buffer))
             {
-                configPtr = &configuration->deviceId;
+                config_ptr = &configuration->device_id;
             }
-            else if (0 == strcmp(SHAREDACCESSKEY, buffer))
+            else if (0 == strcmp(SHARED_ACCESS_KEY, buffer))
             {
-                configPtr = &configuration->sharedAccessKey;
+                config_ptr = &configuration->shared_access_key;
             }
             else if (0 == strcmp(X509, buffer))
             {
-                configPtr = &x509_value;
+                config_ptr = &x509_value;
                 x509 = true;
             }
             else
@@ -313,23 +312,23 @@ static az_result split_connection_string(CONFIGURATION *configuration)
             }
             
             out = buffer;
-            valueStart = ++walker;
+            value_start = ++walker;
             inKeyword = false;
         }
         else if (!inKeyword && (*walker == '\0' || *walker == ';'))
         {
-            *configPtr = az_heap_alloc(hHeap, walker - valueStart + 1);
-            az_span remainder = az_span_copy(*configPtr, az_span_init(buffer, walker - valueStart));
+            *config_ptr = az_heap_alloc(hHeap, walker - value_start + 1);
+            az_span remainder = az_span_copy(*config_ptr, az_span_init(buffer, walker - value_start));
             az_span_copy_u8(remainder, '\0');
-            *configPtr = az_span_slice(*configPtr, 0, walker - valueStart);
+            *config_ptr = az_span_slice(*config_ptr, 0, walker - value_start);
 
             if (x509)
             {
-                if (0 == strcmp(az_span_ptr(*configPtr), "true"))
+                if (0 == strcmp(az_span_ptr(*config_ptr), "true"))
                 {
-                    configuration->usingX509 = true;
+                    configuration->using_X509 = true;
                 }
-                az_heap_free(hHeap, *configPtr);
+                az_heap_free(hHeap, *config_ptr);
             }
 
             if (*walker)
@@ -350,14 +349,14 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     }
 
     // The connection string will never be used again
-    az_heap_free(hHeap, configuration->connectionString);
-    configuration->connectionString = AZ_SPAN_NULL;
+    az_heap_free(hHeap, configuration->connection_string);
+    configuration->connection_string = AZ_SPAN_NULL;
     configuration->port = az_span_init((uint8_t *)PORT, strlen(PORT));
 
     return (az_span_size(configuration->hostname) != 0 && 
-        az_span_size(configuration->deviceId) != 0 &&
-        ((az_span_size(configuration->sharedAccessKey) != 0 && configuration->usingX509 == false) ||
-         (az_span_size(configuration->sharedAccessKey) == 0 && configuration->usingX509 == true)))
+        az_span_size(configuration->device_id) != 0 &&
+        ((az_span_size(configuration->shared_access_key) != 0 && configuration->using_X509 == false) ||
+         (az_span_size(configuration->shared_access_key) == 0 && configuration->using_X509 == true)))
     ? AZ_OK
     : AZ_ERROR_ARG;
 }
@@ -398,8 +397,8 @@ static void print_az_span(const char *leader, const az_span buffer)
 /**
  * @brief Finds a property at the same level in the heirarchy as the starting pointer
  * 
- * @param jr[in,out] Starting location in JSON on input, points to the property's value on output
- * @param property[in] Property to search for
+ * @param jr [in,out]: Starting location in JSON on input, points to the property's value on output
+ * @param property [in]: Property to search for
  * 
  * @returns AZ_OK if found otherwise an error
  */
@@ -443,8 +442,8 @@ az_result json_find_property(az_json_reader *jr, az_span property)
 /**
  * @brief Searches JSON for a specific property
  * 
- * @param jr[in, out] az_json_reader containing starting place and returns pointing to property's value
- * @param path[in] path to search in the format of leve1/level2/target
+ * @param jr [in, out]: az_json_reader containing starting place and returns pointing to property's value
+ * @param path [in]: path to search in the format of leve1/level2/target
  * 
  * @returns AZ_OK or error value
  */
@@ -543,7 +542,7 @@ static void url_decode_in_place(char *in)
 /**
  * @brief Used to pass CTRL-C to main thread to allow graceful closure
  */
-static void signalHandler(int signum)
+static void signal_handler(int signum)
 {
     (void)signum;       // Will always be SIGINT
     noctrlc = false;
@@ -561,8 +560,7 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
 {
     az_json_reader jr;
     bool error = true;
-    //az_result result;
-    char workArea[80];
+    char work_area[80];
     char response[128];
     char publish_topic[256];
     size_t out_topic_length;
@@ -571,21 +569,21 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
 
     if (az_failed(az_json_reader_init(&jr, payload, NULL)))
     {
-        strcpy(workArea, "Invalid JSON");
+        strcpy(work_area, "Invalid JSON");
         error = true;
     }
     else
     {
         if (az_failed(json_find_property(&jr, desired_property_name)))
         {
-            strcpy(workArea, "property value not found");
+            strcpy(work_area, "Property value not found");
             error = true;
         }
         else
         {
             if (az_failed(az_json_token_get_uint32(&jr.token, &out_value)) || out_value < 1 || out_value > 120)
             {
-                strcpy(workArea, "property value is invalid or out of range");
+                strcpy(work_area, "Property value is invalid or out of range");
                 error = true;
             }
             else 
@@ -605,9 +603,9 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
         {
             strcpy(response, "{ \"response\": \"success\" }");
 
-            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, publish_topic, response, strlen(response), 0))
+            if (MQTT_OK != mqtt_publish(publish_user->mqtt_client, publish_topic, response, strlen(response), 0))
             {
-                printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+                printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
             }
         }
     }
@@ -616,12 +614,12 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
         if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
             publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, publish_topic, sizeof(publish_topic), &out_topic_length)))
         {
-            printf("%s\n", workArea);
-            sprintf(response, "{ \"response\": \"error\", \"message\": \"%s\" }", workArea);
+            printf("%s\n", work_area);
+            sprintf(response, "{ \"response\": \"error\", \"message\": \"%s\" }", work_area);
 
-            if (MQTT_OK != mqtt_publish(publish_user->mqttclient, publish_topic, response, strlen(response), 0))
+            if (MQTT_OK != mqtt_publish(publish_user->mqtt_client, publish_topic, response, strlen(response), 0))
             {
-                printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+                printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
             }
         }
     }
@@ -637,18 +635,18 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
 static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
     // payload should be null as in {} - not going to bother checking it
-    char workArea[256];
+    char work_area[256];
     size_t out_topic_length;
 
     publish_user->run = false;
 
     if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
-        publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, workArea, sizeof(workArea), &out_topic_length)))
+        publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"success\" }";
-        if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+        if (MQTT_OK != mqtt_publish(publish_user->mqtt_client, work_area, response, strlen(response), 0))
         {
-            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
         }
     }
 }
@@ -662,18 +660,18 @@ static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
  */
 static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    char workArea[256];
+    char work_area[256];
     size_t out_topic_length;
 
     printf("%s\n", az_span_ptr(payload));
 
     if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
-        publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, workArea, sizeof(workArea), &out_topic_length)))
+        publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"success\" }";
-        if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+        if (MQTT_OK != mqtt_publish(publish_user->mqtt_client, work_area, response, strlen(response), 0))
         {
-            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
         }
     }
 }
@@ -687,16 +685,16 @@ static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
  */
 static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_request *method_request, az_span payload)
 {
-    char workArea[256];
+    char work_area[256];
     size_t out_topic_length;
 
     if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
-        publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, workArea, sizeof(workArea), &out_topic_length)))
+        publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"error\", \"message\": \"no such method\" }";
-        if (MQTT_OK != mqtt_publish(publish_user->mqttclient, workArea, response, strlen(response), 0))
+        if (MQTT_OK != mqtt_publish(publish_user->mqtt_client, work_area, response, strlen(response), 0))
         {
-            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+            printf("Failed to respond to method: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
         }
     }
 }
@@ -747,11 +745,11 @@ static int send_reported_property(PUBLISH_USER *publish_user, az_span payload_sp
         return -1;
     }
 
-    mqtt_publish(publish_user->mqttclient, report_topic, az_span_ptr(payload_span), az_span_size(payload_span), 0);
+    mqtt_publish(publish_user->mqtt_client, report_topic, az_span_ptr(payload_span), az_span_size(payload_span), 0);
 
-    if (publish_user->mqttclient->error != MQTT_OK)
+    if (publish_user->mqtt_client->error != MQTT_OK)
     {
-        printf("Failed to publish reported update: %s\n", mqtt_error_str(publish_user->mqttclient->error));
+        printf("Failed to publish reported update: %s\n", mqtt_error_str(publish_user->mqtt_client->error));
         return -1;
     }
 
@@ -822,7 +820,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     PUBLISH_USER *publish_user = (PUBLISH_USER *)(*state);
     int rc;
 
-    char workArea[256];
+    char work_area[256];
 
     az_span in_topic = az_span_init((uint8_t*)published->topic_name, published->topic_name_size);
     az_iot_hub_client_c2d_request c2d_request;
@@ -842,14 +840,14 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
 
         while (AZ_OK == az_iot_hub_client_properties_next(&c2d_request.properties, &out))
         {
-            if (az_span_size(out.key) < sizeof(workArea) && az_span_size(out.value) < sizeof(workArea))
+            if (az_span_size(out.key) < sizeof(work_area) && az_span_size(out.value) < sizeof(work_area))
             {
-                az_span_to_str(workArea, sizeof(workArea), out.key);
-                url_decode_in_place(workArea);
-                printf("key=%s; ", workArea);
-                az_span_to_str(workArea, sizeof(workArea), out.value);
-                url_decode_in_place(workArea);
-                printf("value=%s\n", workArea);
+                az_span_to_str(work_area, sizeof(work_area), out.key);
+                url_decode_in_place(work_area);
+                printf("key=%s; ", work_area);
+                az_span_to_str(work_area, sizeof(work_area), out.value);
+                url_decode_in_place(work_area);
+                printf("value=%s\n", work_area);
             }
             else 
             {
@@ -861,25 +859,25 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     }
     else if (AZ_OK == az_iot_hub_client_methods_parse_received_topic(publish_user->client, in_topic, &method_request))
     {
-        if (az_span_size(method_request.name) < sizeof(workArea))
+        if (az_span_size(method_request.name) < sizeof(work_area))
         {
             size_t out_topic_length;
 
-            az_span_to_str(workArea, sizeof(workArea), method_request.name);
+            az_span_to_str(work_area, sizeof(work_area), method_request.name);
 
-            printf("Received direct method to invoke %s\n", workArea);
+            printf("Received direct method to invoke %s\n", work_area);
 
             az_span payload = az_span_init((uint8_t *)published->application_message, published->application_message_size);
 
-            if (strcmp(workArea, "test") == 0)
+            if (strcmp(work_area, "test") == 0)
             {
                 method_test(publish_user, &method_request, payload);
             }
-            else if (strcmp(workArea, "kill") == 0)
+            else if (strcmp(work_area, "kill") == 0)
             {
                 method_kill(publish_user, &method_request, payload);
             }
-            else if (strcmp(workArea, "interval") == 0)
+            else if (strcmp(work_area, "interval") == 0)
             {
                 method_interval(publish_user, &method_request, payload);
             }
@@ -988,10 +986,10 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     }
     else
     {
-        if (az_span_size(in_topic) < sizeof(workArea))
+        if (az_span_size(in_topic) < sizeof(work_area))
         {
-            az_span_to_str(workArea, sizeof(workArea), in_topic);
-            printf("Unable to parse topic %s\n", workArea);
+            az_span_to_str(work_area, sizeof(work_area), in_topic);
+            printf("Unable to parse topic %s\n", work_area);
         }
         else
         {
@@ -1039,17 +1037,17 @@ static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClien
 /**
  * @brief Generates the SAS key to connect to the IoT hub
  * 
- * @param[in] client: The IoT client data block
- * @param[in] decodedSAK: Shared access key decoded from Base64
- * @param[in] expiryTime: Number of seconds for SAS token TTL - must be greater than 50
- * @param[out] mqtt_password: Buffer for password
- * @param[in] mqtt_password_length: Length of password buffer
- * @param[out] mqtt_password_out_length: Length of returned password
+ * @param client [in] The IoT client data block
+ * @param decoded_SAK [in] Shared access key decoded from Base64
+ * @param expiryTime [in] Number of seconds for SAS token TTL - must be greater than 50
+ * @param mqtt_password [out] Buffer for password
+ * @param mqtt_password_length [in] Length of password buffer
+ * @param mqtt_password_out_length [out] Length of returned password
  *
- * @returns AZ_OK if successful
+ * @returns  AZ_OK if successful
  */
-static az_result getPassword(az_iot_hub_client *client, 
-        az_span decodedSAK, 
+static az_result get_password(az_iot_hub_client *client, 
+        az_span decoded_SAK, 
         long expiryTime, 
         char *mqtt_password, 
         size_t mqtt_password_length,
@@ -1079,7 +1077,7 @@ static az_result getPassword(az_iot_hub_client *client,
     }
 
     br_sha256_init(&sha256_context);
-    br_hmac_key_init(&hmac_key_context, sha256_context.vtable, az_span_ptr(decodedSAK), az_span_size(decodedSAK));
+    br_hmac_key_init(&hmac_key_context, sha256_context.vtable, az_span_ptr(decoded_SAK), az_span_size(decoded_SAK));
     br_hmac_init(&hmac_context, &hmac_key_context, 0);
     br_hmac_update(&hmac_context, az_span_ptr(signature_span), az_span_size(signature_span));
     br_hmac_out(&hmac_context, az_span_ptr(hashedData_span));
@@ -1105,98 +1103,27 @@ static az_result getPassword(az_iot_hub_client *client,
 /**
  * @brief Subscribes to IoT hub topics for C2D and direct methods
  * 
- * @param[in] mqttclient: The MQTT client data block
+ * @param[in] mqtt_client: The MQTT client data block
  * 
  * @returns MQTTErrors: Any error that occured during subscribe or MQTT_OK
  */
-static enum MQTTErrors topic_subscribe(struct mqtt_client *mqttclient)
+static enum MQTTErrors topic_subscribe(struct mqtt_client *mqtt_client)
 {
-    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_METHODS_SUBSCRIBE_TOPIC, 0);
-    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_C2D_SUBSCRIBE_TOPIC, 0);
-    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_TWIN_PATCH_SUBSCRIBE_TOPIC, 0);
-    mqtt_subscribe(mqttclient, AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_SUBSCRIBE_TOPIC, 0);
-    mqtt_sync(mqttclient);
+    mqtt_subscribe(mqtt_client, AZ_IOT_HUB_CLIENT_METHODS_SUBSCRIBE_TOPIC, 0);
+    mqtt_subscribe(mqtt_client, AZ_IOT_HUB_CLIENT_C2D_SUBSCRIBE_TOPIC, 0);
+    mqtt_subscribe(mqtt_client, AZ_IOT_HUB_CLIENT_TWIN_PATCH_SUBSCRIBE_TOPIC, 0);
+    mqtt_subscribe(mqtt_client, AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_SUBSCRIBE_TOPIC, 0);
+    mqtt_sync(mqtt_client);
 
-    return mqttclient->error;
+    return mqtt_client->error;
 }
 
 /**
- * @brief Connect to the server and start the MQTT session
+ * @brief Called by underlying MQTT library when a connection failure is detected
  * 
- * @param[in] config: Control block with preacquired unchanging values
- * @param[in] client: azure iot hub client
- * @param[in] mqtt_client: MQTT client control block
- * @param[in] reconnect: When true will close MQTT and disconnect the socket first
- * @param[out] expiryTime: Returns the moment that the generated SAS key will expire
- * 
- * @returns 0 = success, -1 = socket failure, -2 = MQTT failure
- */ 
-static int server_connect(CONFIGURATION *config, az_iot_hub_client *client, struct mqtt_client *mqtt_client, bool reconnect, long *expiryTime)
-{
-    int64_t start;
-    int attempt = 0;
-    int rc = -1;
-
-    if (reconnect)
-    {
-        printf("Disconnected\n");
-        mqtt_disconnect(mqtt_client);
-        mqtt_sync(mqtt_client);
-        close_socket(&config->ctx);
-    }
-
-    while (rc != 0)
-    {
-        start = az_platform_clock_msec();
-        printf("Connection attempt %d\n", attempt + 1);
-
-        if (0 != (rc = open_nb_socket(&config->ctx, az_span_ptr(config->hostname), az_span_ptr(config->port))))
-        {
-            if (rc == -1)
-            {
-                az_platform_sleep_msec(az_iot_retry_calc_delay((int)(az_platform_clock_msec() - start), ++attempt, 1000, 20 * 60 * 1000, (rand() % 5000)));
-            }
-            else
-            {
-                // Unrecoverable error
-                printf("Unable to open socket: Unrecoverable error\n");
-                return -1;
-            }
-        }
-    }
-
-    // Get the MQTT password
-    *expiryTime = time(NULL) + config->sas_ttl;
-    size_t mqtt_password_length = 256;
-    char *mqtt_password = heapMalloc(hHeap, 256);
-
-    if (config->usingX509 == false)
-    {
-        if (AZ_OK != (rc = getPassword(client, config->decodedSAK, *expiryTime, mqtt_password, mqtt_password_length, &mqtt_password_length)))
-        {
-            printf("Failed to generate MQTT password: %d\n", rc);
-            return -1;
-        }
-    }
-    else
-    {
-        mqtt_password = NULL;
-    }
-
-    // Code just assumes MQTT connect will be ok if socker it connected - failure is considered terminal
-    mqtt_connect(mqtt_client, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
-    heapFree(hHeap, mqtt_password);
-    topic_subscribe(mqtt_client);
-    mqtt_sync(mqtt_client);
-
-    if (mqtt_client->error != MQTT_OK)
-    {
-        printf("Failed to connect to MQTT broker: %s\n", mqtt_error_str(mqtt_client->error));
-    }
-
-    return mqtt_client->error == MQTT_OK? 0 : -2;
-}
-
+ * @param mqtt_client [in] MQTT library control block
+ * @param reconnect_user [in,out] Address of user data
+ */
 static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_user)
 {
     CONFIGURATION *config = *((CONFIGURATION **)reconnect_user);
@@ -1230,13 +1157,13 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
     }
     // Get the MQTT password
     size_t mqtt_password_length = 256;
-    char *mqtt_password = heapMalloc(hHeap, 256);
+    char *mqtt_password = heap_malloc(hHeap, 256);
 
-    if (config->usingX509 == false)
+    if (config->using_X509 == false)
     {
         config->expiry_time = time(NULL) + config->sas_ttl;
 
-        if (AZ_OK != (rc = getPassword(config->client, config->decodedSAK, config->expiry_time, mqtt_password, mqtt_password_length, &mqtt_password_length)))
+        if (AZ_OK != (rc = get_password(config->client, config->decoded_SAK, config->expiry_time, mqtt_password, mqtt_password_length, &mqtt_password_length)))
         {
             printf("Failed to generate MQTT password: %d\n", rc);
             return;
@@ -1252,7 +1179,7 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
 
     // Code just assumes MQTT connect will be ok if socket connected - failure is considered terminal
     mqtt_connect(mqttClient, config->client_id, NULL, NULL, 0, config->user_id, mqtt_password, 0, 400);
-    heapFree(hHeap, mqtt_password);
+    heap_free(hHeap, mqtt_password);
     topic_subscribe(mqttClient);
     config->connected = true;
 }
@@ -1272,8 +1199,8 @@ static void precondition_failure_callback()
 /**
  * @brief Print out SDK log data
  * 
- * @param classification[in]: Severity of the message
- * @param message[in]: The message content
+ * @param classification [in] Severity of the message
+ * @param message [in] The message content
  */
 static void log_func(az_log_classification classification, az_span message)
 {
@@ -1287,7 +1214,7 @@ static void print_heap_info()
 {
     HEAPINFO hi;
 
-    heapGetInfo(hHeap, &hi);
+    heap_get_info(hHeap, &hi);
 
     printf("Free: %d\tUsed: %d\tLargest: %d\n", hi.freeBytes, hi.usedBytes, hi.largestFree);
 }
@@ -1308,7 +1235,7 @@ int main()
     int rc;
 
     // Initialize private heap
-    hHeap = heapInit(heap, HEAP_LENGTH);
+    hHeap = heap_init(heap, HEAP_LENGTH);
 
     // Optionally set up an alternative precondition failure callback
     az_precondition_failed_set_callback(precondition_failure_callback);
@@ -1321,14 +1248,14 @@ int main()
     }
 
     // Convert the certificate into something BearSSL understands
-    if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trustedRootCert_filename), &config.ctx.anchOut)))
+    if (0 == (config.ctx.ta_count = get_trusted_anchors(az_span_ptr(config.trusted_root_cert_filename), &config.ctx.anchOut)))
     {
         printf("Trusted root certificate file is invalid\n");
         return 4;
     }
 
-    az_heap_free(hHeap, config.trustedRootCert_filename);
-    config.trustedRootCert_filename = AZ_SPAN_NULL;
+    az_heap_free(hHeap, config.trusted_root_cert_filename);
+    config.trusted_root_cert_filename = AZ_SPAN_NULL;
 
     // Parse the connection string
     if (az_failed(rc = split_connection_string(&config)))
@@ -1337,12 +1264,12 @@ int main()
         return rc;
     }
 
-    az_heap_free(hHeap, config.connectionString);
-    config.connectionString = AZ_SPAN_NULL;
+    az_heap_free(hHeap, config.connection_string);
+    config.connection_string = AZ_SPAN_NULL;
 
-    if (config.usingX509 == true)
+    if (config.using_X509 == true)
     {
-        if (az_span_size(config.x509Cert_filename) == 0 || az_span_size(config.x509Key_filename) == 0)
+        if (az_span_size(config.x509_cert_filename) == 0 || az_span_size(config.x509Key_filename) == 0)
         {
             printf("Connection specifies X509 authentication but certificate or key was not passed\n");
             return 4;
@@ -1355,7 +1282,7 @@ int main()
                 return 4;
             }
 
-            if ((config.x509cert_count = read_certificates_string(az_span_ptr(config.x509Cert_filename), &config.x509cert)) <= 0)
+            if ((config.x509_cert_count = read_certificates_string(az_span_ptr(config.x509_cert_filename), &config.x509_cert)) <= 0)
             {
                 printf("Unable to parse device certificate\n");
                 return 4;
@@ -1363,8 +1290,8 @@ int main()
 
             az_heap_free(hHeap, config.x509Key_filename);
             config.x509Key_filename = AZ_SPAN_NULL;
-            az_heap_free(hHeap, config.x509Cert_filename);
-            config.x509Cert_filename = AZ_SPAN_NULL;
+            az_heap_free(hHeap, config.x509_cert_filename);
+            config.x509_cert_filename = AZ_SPAN_NULL;
         }
     }
     else
@@ -1376,20 +1303,20 @@ int main()
     az_iot_hub_client_options options = az_iot_hub_client_options_default();
 
     // Initialize the embedded IoT data block
-    if (AZ_OK != (rc = az_iot_hub_client_init(&client, config.hostname, config.deviceId, &options)))
+    if (AZ_OK != (rc = az_iot_hub_client_init(&client, config.hostname, config.device_id, &options)))
     {
         printf("Failed to initialize client - %d\n", rc);
         return rc;
     }
 
-    az_heap_free(hHeap, config.deviceId);
-    config.deviceId = AZ_SPAN_NULL;
+    az_heap_free(hHeap, config.device_id);
+    config.device_id = AZ_SPAN_NULL;
 
     size_t outLength;
 
     // Get the MQTT client id
     outLength = 200;
-    config.client_id = heapMalloc(hHeap, outLength);
+    config.client_id = heap_malloc(hHeap, outLength);
 
     if (AZ_OK != (rc = az_iot_hub_client_get_client_id(&client, config.client_id, outLength, &outLength)))
     { 
@@ -1397,11 +1324,11 @@ int main()
         return rc;
     }
 
-    config.client_id = heapRealloc(hHeap, config.client_id, outLength + 1);
+    config.client_id = heap_realloc(hHeap, config.client_id, outLength + 1);
 
     // Get the MQTT user name
     outLength = 300;
-    config.user_id = heapMalloc(hHeap, outLength);
+    config.user_id = heap_malloc(hHeap, outLength);
 
     if (AZ_OK != (rc = az_iot_hub_client_get_user_name(&client, config.user_id, outLength, &outLength)))
     { 
@@ -1409,35 +1336,35 @@ int main()
         return rc; 
     }
 
-    config.user_id = heapRealloc(hHeap, config.user_id, outLength + 1);
+    config.user_id = heap_realloc(hHeap, config.user_id, outLength + 1);
 
-    if (config.usingX509 == false)
+    if (config.using_X509 == false)
     {
         // Decode the SAS key
-        config.decodedSAK = az_heap_alloc(hHeap, 256);
+        config.decoded_SAK = az_heap_alloc(hHeap, 256);
 
-        if (AZ_OK != (rc = az_decode_base64(config.sharedAccessKey, config.decodedSAK, &config.decodedSAK)))
+        if (AZ_OK != (rc = az_decode_base64(config.shared_access_key, config.decoded_SAK, &config.decoded_SAK)))
         {
             printf("Failed to decode the shared access key: %d\n", rc);
             return 4;
         }
 
-        config.decodedSAK = az_heap_adjust(hHeap, config.decodedSAK);
+        config.decoded_SAK = az_heap_adjust(hHeap, config.decoded_SAK);
     }
     else
     {
-        config.decodedSAK = AZ_SPAN_NULL;
+        config.decoded_SAK = AZ_SPAN_NULL;
     }
     
 
     printf("\nMQTT connection details\n");
-    printf("\tAuthentication: %s\n", (config.usingX509? "X.509" : "SAS Token"));
+    printf("\tAuthentication: %s\n", (config.using_X509? "X.509" : "SAS Token"));
     printf("\t     Client Id: %s\n", config.client_id);
     printf("\t       User Id: %s\n", config.user_id);
 
     // Get the MQTT publish topic
     outLength = 100;
-    char *mqtt_topic = heapMalloc(hHeap, outLength);
+    char *mqtt_topic = heap_malloc(hHeap, outLength);
 
     if (AZ_OK != (rc = az_iot_hub_client_telemetry_get_publish_topic(&client, NULL, mqtt_topic, outLength, &outLength)))
     {
@@ -1445,14 +1372,14 @@ int main()
         return rc;
     }
 
-    mqtt_topic = heapRealloc(hHeap, mqtt_topic, outLength + 1);
+    mqtt_topic = heap_realloc(hHeap, mqtt_topic, outLength + 1);
     printf("\t         Topic: %s\n", mqtt_topic);
 
     // Optionally set up a logger
     az_log_set_callback(log_func);
 
     // Initialize the TLS library
-    if (0 != initialize_TLS(&config.ctx, config.x509cert, config.x509cert_count, config.x509pk, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
+    if (0 != initialize_TLS(&config.ctx, config.x509_cert, config.x509_cert_count, config.x509pk, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
     {
         printf("TLS initialization failed\n");
         return 4;
@@ -1465,33 +1392,33 @@ int main()
     config.client = &client;
 
     // Setup the MQTT client 
-    struct mqtt_client mqttclient;
+    struct mqtt_client mqtt_client;
 
-    PUBLISH_USER publish_user = { &mqttclient, &client, 5, true };
+    PUBLISH_USER publish_user = { &mqtt_client, &client, 5, true };
 
-    mqttclient.publish_response_callback_state = &publish_user;
-    mqtt_init_reconnect(&mqttclient, reconnect_callback, &config, publish_callback);
+    mqtt_client.publish_response_callback_state = &publish_user;
+    mqtt_init_reconnect(&mqtt_client, reconnect_callback, &config, publish_callback);
 
     // Handle SIGPIPE without interrupt
     signal(SIGPIPE, SIG_IGN);
 
     // Call sync to force connection
-    mqtt_sync(&mqttclient);
+    mqtt_sync(&mqtt_client);
 
     char msg[300];
     int counter = 49;
     int msgNumber = 0;
 
-    signal(SIGINT, signalHandler);
+    signal(SIGINT, signal_handler);
 
-    if (0 != (rc = request_twin(&client, &mqttclient)))
+    if (0 != (rc = request_twin(&client, &mqtt_client)))
     {
         printf("Failed to request twin: %d\n", rc);
     }
 
     while (!initial_twin_complete)
     {
-        mqtt_sync(&mqttclient);
+        mqtt_sync(&mqtt_client);
         az_platform_sleep_msec(100);
     }
 
@@ -1503,32 +1430,32 @@ int main()
     while (publish_user.run && noctrlc)
     {
         // Check for SAS token about to expire and refresh
-        if (config.connected == true && config.usingX509 == false && config.expiry_time - time(NULL) < (config.sas_ttl * 80 / 100))
+        if (config.connected == true && config.using_X509 == false && config.expiry_time - time(NULL) < (config.sas_ttl * 80 / 100))
         {
             // Need to regenerate a SAS token
             printf("Reaunthenticating\n");
             config.connected = false;
-            mqtt_reconnect(&mqttclient);
+            mqtt_reconnect(&mqtt_client);
         }
 
-        if (mqttclient.error == MQTT_OK && ++counter % (publish_user.interval * 10) == 0) 
+        if (mqtt_client.error == MQTT_OK && ++counter % (publish_user.interval * 10) == 0) 
         {
             // Send some telemetry
             counter = 0;
             sprintf(msg, "{ \"message\": %d }", msgNumber++);
             printf("Sending %s\n", msg);
-            mqtt_publish(&mqttclient, mqtt_topic, msg, strlen(msg), MQTT_PUBLISH_QOS_0);
+            mqtt_publish(&mqtt_client, mqtt_topic, msg, strlen(msg), MQTT_PUBLISH_QOS_0);
         }
 
         // Push and pull the data
-        mqtt_sync(&mqttclient);
+        mqtt_sync(&mqtt_client);
         az_platform_sleep_msec(100);
     }
 
     printf("Cancel requested - exiting\n");
 
-    mqtt_disconnect(&mqttclient);
-    mqtt_sync(&mqttclient);
+    mqtt_disconnect(&mqtt_client);
+    mqtt_sync(&mqtt_client);
     close_socket(&config.ctx);
 
     return 0;

@@ -23,7 +23,7 @@ static int vector_size_check(VECTOR vector)
 
     if (vector->all_elements == vector->current_elements)
     {
-        vector->elements = heapRealloc(vector->hheap, vector->elements, (vector->all_elements + growth) * vector->element_size);
+        vector->elements = heap_realloc(vector->hheap, vector->elements, (vector->all_elements + growth) * vector->element_size);
 
         if (vector->elements == NULL)
         {
@@ -45,7 +45,7 @@ VECTORHANDLE vector_create(HEAPHANDLE hheap, uint16_t element_size)
         return NULL;
     }
 
-    VECTOR vector = heapMalloc(hheap, sizeof(VECTOR_STRUCT));
+    VECTOR vector = heap_malloc(hheap, sizeof(VECTOR_STRUCT));
 
     if (vector != NULL)
     {
@@ -67,7 +67,7 @@ VECTORHANDLE vector_wrap(HEAPHANDLE hheap, void *in, uint16_t element_size, uint
         return NULL;
     }
 
-    VECTOR vector = heapMalloc(hheap, sizeof(VECTOR_STRUCT));
+    VECTOR vector = heap_malloc(hheap, sizeof(VECTOR_STRUCT));
 
     if (vector != NULL)
     {
@@ -196,7 +196,7 @@ int vector_compress(VECTORHANDLE hvector)
 
     if (vector->current_elements < vector->all_elements)
     {
-        vector->elements = heapRealloc(vector->hheap, vector->elements, vector->current_elements * vector->element_size);
+        vector->elements = heap_realloc(vector->hheap, vector->elements, vector->current_elements * vector->element_size);
     }
 
     return 0;
@@ -218,10 +218,10 @@ int vector_destroy(VECTORHANDLE hvector, bool keep_buffer)
 
     if (keep_buffer == false)
     {
-        heapFree(vector->hheap, vector->elements);
+        heap_free(vector->hheap, vector->elements);
     }
 
-    heapFree(vector->hheap, vector);
+    heap_free(vector->hheap, vector);
 
     return 0;
 }
