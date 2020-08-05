@@ -1134,6 +1134,7 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
     if (mqttClient->error != MQTT_ERROR_INITIAL_RECONNECT)
     {
         close_socket(&config->ctx);
+        config->connected = false;
     }
 
     while (rc != 0)
@@ -1182,6 +1183,7 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
     heap_free(hHeap, mqtt_password);
     topic_subscribe(mqttClient);
     config->connected = true;
+    printf("Connected\n");
 }
 
 /**
