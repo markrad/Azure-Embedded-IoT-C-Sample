@@ -171,7 +171,7 @@ static az_result read_configuration_entry(
   if (env != NULL)
   {
     printf("%s\n", hide_value ? "***" : env);
-    az_span env_span = az_span_from_str(env);
+    az_span env_span = az_span_create_from_str(env);
     AZ_RETURN_IF_NOT_ENOUGH_SIZE(buffer, az_span_size(env_span) + 1);
     az_span remainder = az_span_copy(buffer, env_span);
     az_span_copy_u8(remainder, '\0');
@@ -180,7 +180,7 @@ static az_result read_configuration_entry(
   else if (default_value != NULL)
   {
     printf("%s\n", default_value);
-    az_span default_span = az_span_from_str(default_value);
+    az_span default_span = az_span_create_from_str(default_value);
     AZ_RETURN_IF_NOT_ENOUGH_SIZE(buffer, az_span_size(default_span));
     az_span remainder = az_span_copy(buffer, default_span);
     az_span_copy_u8(remainder, '\0');

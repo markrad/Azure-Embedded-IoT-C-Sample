@@ -30,7 +30,8 @@ RUN cp -v ../include/*.h /usr/local/include
 
 # Acquire and build Azure SDK for C libraries
 WORKDIR /build
-RUN git clone --branch azure-sdk-for-c_1.0.0-preview.3 https://github.com/azure/azure-sdk-for-c.git
+#RUN git clone --branch azure-sdk-for-c_1.0.0-preview.3 https://github.com/azure/azure-sdk-for-c.git
+RUN git clone --branch 1.3.2 https://github.com/Azure/azure-sdk-for-c.git
 WORKDIR /build/azure-sdk-for-c
 RUN mkdir build
 WORKDIR /build/azure-sdk-for-c/build
@@ -51,3 +52,5 @@ RUN mkdir build
 WORKDIR /build/Azure-Embedded-IoT-C-Sample/build
 RUN cmake ..
 RUN make
+
+ADD ./certs.pem ./
