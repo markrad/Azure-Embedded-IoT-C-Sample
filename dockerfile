@@ -46,7 +46,7 @@ RUN find . -iname "lib*.a" -exec cp -v {} /usr/local/lib \;
 
 # Acqure and build the sample
 WORKDIR /build
-RUN git clone https://github.com/markrad/Azure-Embedded-IoT-C-Sample.git
+RUN git clone -b latest_branch https://github.com/markrad/Azure-Embedded-IoT-C-Sample.git
 WORKDIR /build/Azure-Embedded-IoT-C-Sample
 RUN mkdir build
 WORKDIR /build/Azure-Embedded-IoT-C-Sample/build

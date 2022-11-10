@@ -172,7 +172,12 @@ static az_result read_configuration_entry(
   {
     printf("%s\n", hide_value ? "***" : env);
     az_span env_span = az_span_create_from_str(env);
-    AZ_RETURN_IF_NOT_ENOUGH_SIZE(buffer, az_span_size(env_span) + 1);
+
+    if ((az_span_size(buffer) < az_span_size(env)) || (az_span_size(env_span) < 0))
+    {
+        printf("Buffer too small for %s", env_name);
+        return AZ_ERROR_ARG;
+    }
     az_span remainder = az_span_copy(buffer, env_span);
     az_span_copy_u8(remainder, '\0');
     *out_value = az_span_slice(buffer, 0, az_span_size(env_span) + 1);
@@ -181,7 +186,12 @@ static az_result read_configuration_entry(
   {
     printf("%s\n", default_value);
     az_span default_span = az_span_create_from_str(default_value);
-    AZ_RETURN_IF_NOT_ENOUGH_SIZE(buffer, az_span_size(default_span));
+    
+    if ((az_span_size(buffer) < az_span_size(env)) || (az_span_size(env_span) < 0))
+    {
+        printf("Buffer too small for %s", env_name);
+        return AZ_ERROR_ARG;
+    }
     az_span remainder = az_span_copy(buffer, default_span);
     az_span_copy_u8(remainder, '\0');
     *out_value = az_span_slice(buffer, 0, az_span_size(default_span) + 1);
