@@ -173,7 +173,7 @@ static az_result read_configuration_entry(
     printf("%s\n", hide_value ? "***" : env);
     az_span env_span = az_span_create_from_str(env);
 
-    if ((az_span_size(buffer) < az_span_size(env)) || (az_span_size(env_span) < 0))
+    if ((az_span_size(buffer) < az_span_size(env_span)) || (az_span_size(env_span) < 0))
     {
         printf("Buffer too small for %s", env_name);
         return AZ_ERROR_ARG;
@@ -186,8 +186,8 @@ static az_result read_configuration_entry(
   {
     printf("%s\n", default_value);
     az_span default_span = az_span_create_from_str(default_value);
-    
-    if ((az_span_size(buffer) < az_span_size(env)) || (az_span_size(env_span) < 0))
+
+    if ((az_span_size(buffer) < az_span_size(default_span)) || (az_span_size(default_span) < 0))
     {
         printf("Buffer too small for %s", env_name);
         return AZ_ERROR_ARG;
@@ -223,32 +223,38 @@ static az_result read_configuration_and_init_client(CONFIGURATION *configuration
     _az_PRECONDITION_NOT_NULL(configuration);
 
     az_span work_span;
+    az_result rc;
 
     configuration->connection_string = az_heap_alloc(hHeap, 256);
 
-    AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, true, configuration->connection_string, &configuration->connection_string));
+    if (AZ_OK != (rc = read_configuration_entry(
+        "Connection String", ENV_DEVICE_CONNECTION_STRING, NULL, true, configuration->connection_string, &configuration->connection_string))) 
     configuration->connection_string = az_heap_adjust(hHeap, configuration->connection_string);
 
     // Not actually large enough to contain the maximum path but should do
     configuration->trusted_root_cert_filename = az_heap_alloc(hHeap, 1024);
-    AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trusted_root_cert_filename, &configuration->trusted_root_cert_filename));
+    if (AZ_OK != (rc = read_configuration_entry(
+        "X509 Trusted PEM Store File", ENV_DEVICE_X509_TRUST_PEM_FILE, NULL, false, configuration->trusted_root_cert_filename, &configuration->trusted_root_cert_filename)))
+        return rc;
+
     configuration->trusted_root_cert_filename = az_heap_adjust(hHeap, configuration->trusted_root_cert_filename);
 
     work_span = az_heap_alloc(hHeap, 10);
 
-    AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span));
+    if (AZ_OK != (rc = read_configuration_entry(
+        "SAS Token Time to Live", ENV_DEVICE_SAS_TOKEN_TTL, "3600", false, work_span, &work_span)))
+        return rc;
 
     configuration->x509_cert_filename = az_heap_alloc(hHeap, 1024);
-    AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509_cert_filename, &configuration->x509_cert_filename));
+    if (AZ_OK != (rc = read_configuration_entry(
+        "X509 Client Certificate File", ENV_DEVICE_X509_CLIENT_PEM_FILE, "", false, configuration->x509_cert_filename, &configuration->x509_cert_filename)))
+        return rc;
     configuration->x509_cert_filename = az_heap_adjust(hHeap, configuration->x509_cert_filename);
 
     configuration->x509Key_filename = az_heap_alloc(hHeap, 1024);
-    AZ_RETURN_IF_FAILED(read_configuration_entry(
-        "X509 Client Key File", ENV_DEVICE_X509_CLIENT_KEY_FILE, "", false, configuration->x509Key_filename, &configuration->x509Key_filename));
+    if (AZ_OK != (rc = read_configuration_entry(
+        "X509 Client Key File", ENV_DEVICE_X509_CLIENT_KEY_FILE, "", false, configuration->x509Key_filename, &configuration->x509Key_filename)))
+        return rc;
     configuration->x509Key_filename = az_heap_adjust(hHeap, configuration->x509Key_filename);
 
     az_result ar = az_span_atou32(az_span_slice(work_span, 0, az_span_size(work_span) - 1), &configuration->sas_ttl);
@@ -282,15 +288,15 @@ static az_result split_connection_string(CONFIGURATION *configuration)
     char *value_start;
     az_span *config_ptr;
     az_span work;
-    az_span x509_value = AZ_SPAN_NULL;
+    az_span x509_value = AZ_SPAN_EMPTY;
     bool x509;
 
     _az_PRECONDITION_NOT_NULL(configuration);
 
-    configuration->hostname = AZ_SPAN_NULL;
-    configuration->port = AZ_SPAN_NULL;
-    configuration->device_id = AZ_SPAN_NULL;
-    configuration->shared_access_key = AZ_SPAN_NULL;
+    configuration->hostname = AZ_SPAN_EMPTY;
+    configuration->port = AZ_SPAN_EMPTY;
+    configuration->device_id = AZ_SPAN_EMPTY;
+    configuration->shared_access_key = AZ_SPAN_EMPTY;
     configuration->using_X509 = false;
 
     while (true)
@@ -328,7 +334,9 @@ static az_result split_connection_string(CONFIGURATION *configuration)
         else if (!inKeyword && (*walker == '\0' || *walker == ';'))
         {
             *config_ptr = az_heap_alloc(hHeap, walker - value_start + 1);
-            az_span remainder = az_span_copy(*config_ptr, az_span_init(buffer, walker - value_start));
+            // *walker = '\0';
+            az_span remainder = az_span_copy(*config_ptr, az_span_create(value_start, walker - value_start));
+            // az_span remainder = az_span_copy(*config_ptr, az_span_init(buffer, walker - value_start));
             az_span_copy_u8(remainder, '\0');
             *config_ptr = az_span_slice(*config_ptr, 0, walker - value_start);
 
@@ -358,10 +366,7 @@ static az_result split_connection_string(CONFIGURATION *configuration)
         }
     }
 
-    // The connection string will never be used again
-    az_heap_free(hHeap, configuration->connection_string);
-    configuration->connection_string = AZ_SPAN_NULL;
-    configuration->port = az_span_init((uint8_t *)PORT, strlen(PORT));
+    configuration->port = az_span_create_from_str((char *)PORT);
 
     return (az_span_size(configuration->hostname) != 0 && 
         az_span_size(configuration->device_id) != 0 &&
@@ -414,7 +419,7 @@ static void print_az_span(const char *leader, const az_span buffer)
  */
 az_result json_find_property(az_json_reader *jr, az_span property)
 {
-    az_result result;
+    az_result rc;
     char property_name[32];
     int32_t property_name_length;
 
@@ -423,30 +428,36 @@ az_result json_find_property(az_json_reader *jr, az_span property)
         return AZ_ERROR_ARG;
     }
 
-    AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+    if (AZ_OK != (rc = az_json_reader_next_token(jr)))
+        return rc;
 
     while (jr->token.kind != AZ_JSON_TOKEN_END_OBJECT)
     {
         if (jr->token.kind == AZ_JSON_TOKEN_PROPERTY_NAME)
         {
-            AZ_RETURN_IF_FAILED(az_json_token_get_string(&jr->token, property_name, sizeof(property_name), &property_name_length));
+            if (AZ_OK != (rc = az_json_token_get_string(&jr->token, property_name, sizeof(property_name), &property_name_length)))
+                return rc;
+
             property_name[property_name_length] = '\0';
 
             if (az_json_token_is_text_equal(&jr->token, property))
             {
-                AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+                if (AZ_OK != (rc =az_json_reader_next_token(jr)))
+                    return rc;
                 return AZ_OK;
             }
             else
             {
-                AZ_RETURN_IF_FAILED(az_json_reader_skip_children(jr));
+                if (AZ_OK != (rc = az_json_reader_skip_children(jr)))
+                    return rc;
             }
         }
 
-        AZ_RETURN_IF_FAILED(az_json_reader_next_token(jr));
+        if (AZ_OK != (rc = az_json_reader_next_token(jr)))
+            return rc;
     }
 
-    return AZ_ERROR_EOF;
+    return AZ_ERROR_JSON_READER_DONE;
 }
 
 /**
@@ -459,6 +470,8 @@ az_result json_find_property(az_json_reader *jr, az_span property)
  */
 az_result json_find_path(az_json_reader *jr, az_span path)
 {
+    az_result rc;
+
     if (az_span_ptr(path) == NULL || az_span_size(path) == 0 || jr == NULL)
     {
         return AZ_ERROR_ARG;
@@ -476,7 +489,8 @@ az_result json_find_path(az_json_reader *jr, az_span path)
                 return AZ_ERROR_ARG;
             }
 
-            AZ_RETURN_IF_FAILED(json_find_property(jr, az_span_init(start, walk - start)));
+            if (AZ_OK != (rc = json_find_property(jr, az_span_slice(path, start - az_span_ptr(path), walk - az_span_ptr(path)))))
+                return rc;
 
             if (az_span_size(path) != walk - az_span_ptr(path) && jr->token.kind != AZ_JSON_TOKEN_BEGIN_OBJECT)
             {
@@ -577,21 +591,21 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
     uint32_t out_value;
     az_span desired_property_name = AZ_SPAN_LITERAL_FROM_STR("value");
 
-    if (az_failed(az_json_reader_init(&jr, payload, NULL)))
+    if (AZ_OK != az_json_reader_init(&jr, payload, NULL))
     {
         strcpy(work_area, "Invalid JSON");
         error = true;
     }
     else
     {
-        if (az_failed(json_find_property(&jr, desired_property_name)))
+        if (AZ_OK != (json_find_property(&jr, desired_property_name)))
         {
             strcpy(work_area, "Property value not found");
             error = true;
         }
         else
         {
-            if (az_failed(az_json_token_get_uint32(&jr.token, &out_value)) || out_value < 1 || out_value > 120)
+            if (AZ_OK != (az_json_token_get_uint32(&jr.token, &out_value)) || out_value < 1 || out_value > 120)
             {
                 strcpy(work_area, "Property value is invalid or out of range");
                 error = true;
@@ -608,7 +622,7 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
         
     if (!error)
     {
-        if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+        if (AZ_OK == (az_iot_hub_client_methods_response_get_publish_topic(
             publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, publish_topic, sizeof(publish_topic), &out_topic_length)))
         {
             strcpy(response, "{ \"response\": \"success\" }");
@@ -621,7 +635,7 @@ static void method_interval(PUBLISH_USER *publish_user, az_iot_hub_client_method
     }
     else
     {
-        if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+        if (AZ_OK != (az_iot_hub_client_methods_response_get_publish_topic(
             publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, publish_topic, sizeof(publish_topic), &out_topic_length)))
         {
             printf("%s\n", work_area);
@@ -650,7 +664,7 @@ static void method_kill(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
 
     publish_user->run = false;
 
-    if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+    if (AZ_OK == (az_iot_hub_client_methods_response_get_publish_topic(
         publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"success\" }";
@@ -675,7 +689,7 @@ static void method_test(PUBLISH_USER *publish_user, az_iot_hub_client_method_req
 
     printf("%s\n", az_span_ptr(payload));
 
-    if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+    if (AZ_OK == (az_iot_hub_client_methods_response_get_publish_topic(
         publish_user->client, method_request->request_id, AZ_IOT_STATUS_OK, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"success\" }";
@@ -698,7 +712,7 @@ static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_
     char work_area[256];
     size_t out_topic_length;
 
-    if (!az_failed(az_iot_hub_client_methods_response_get_publish_topic(
+    if (AZ_OK == (az_iot_hub_client_methods_response_get_publish_topic(
         publish_user->client, method_request->request_id, AZ_IOT_STATUS_BAD_REQUEST, work_area, sizeof(work_area), &out_topic_length)))
     {
         char response[] = "{ \"response\": \"error\", \"message\": \"no such method\" }";
@@ -719,17 +733,20 @@ static void method_unknown(PUBLISH_USER *publish_user, az_iot_hub_client_method_
  */
 static az_result build_reported_properties(PUBLISH_USER *publish_user, az_span *payload_out)
 {
+    az_result rc;
+
     static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
 
     az_json_writer builder;
 
-    AZ_RETURN_IF_FAILED(az_json_writer_init(&builder, *payload_out, NULL));
-    AZ_RETURN_IF_FAILED(az_json_writer_append_begin_object(&builder));
-    AZ_RETURN_IF_FAILED(az_json_writer_append_property_name(&builder, reported_property_name));
-    AZ_RETURN_IF_FAILED(az_json_writer_append_int32(&builder, publish_user->interval));
-    AZ_RETURN_IF_FAILED(az_json_writer_append_end_object(&builder));
+    if (AZ_OK != (rc = az_json_writer_init(&builder, *payload_out, NULL)) ||
+        AZ_OK != (rc = az_json_writer_append_begin_object(&builder)) ||
+        AZ_OK != (rc = az_json_writer_append_property_name(&builder, reported_property_name)) ||
+        AZ_OK != (rc = az_json_writer_append_int32(&builder, publish_user->interval)) ||
+        AZ_OK != (rc = az_json_writer_append_end_object(&builder)))
+        return rc;
 
-    *payload_out = az_json_writer_get_json(&builder);
+    *payload_out = az_json_writer_get_bytes_used_in_destination(&builder);
 
     return AZ_OK;
 }
@@ -746,10 +763,10 @@ static int send_reported_property(PUBLISH_USER *publish_user, az_span payload_sp
 {
     static az_span request_id = AZ_SPAN_LITERAL_FROM_STR("reported_prop");
     char report_topic[128];
-    
+
     printf("Sending updated properties: %.*s\n", az_span_size(payload_span), az_span_ptr(payload_span));
 
-    if (az_failed(az_iot_hub_client_twin_patch_get_publish_topic(publish_user->client, request_id, report_topic, sizeof(report_topic), NULL)))
+    if (AZ_OK !=(az_iot_hub_client_twin_patch_get_publish_topic(publish_user->client, request_id, report_topic, sizeof(report_topic), NULL)))
     {
         printf("Failed to acquire report topic\n");
         return -1;
@@ -778,7 +795,7 @@ static int report_property(PUBLISH_USER *publish_user)
     char buffer[256];
     az_span buffer_span = AZ_SPAN_FROM_BUFFER(buffer);
 
-    if (az_failed(build_reported_properties(publish_user, &buffer_span)))
+    if (AZ_OK !=(build_reported_properties(publish_user, &buffer_span)))
     {
         printf("Failed to build report JSON\n");
         return -1;
@@ -806,12 +823,15 @@ static az_result update_property(PUBLISH_USER *publish_user, az_span desired_pay
     //static az_span version_name = AZ_SPAN_LITERAL_FROM_STR("$version");
     static az_span reported_property_name = AZ_SPAN_LITERAL_FROM_STR("interval");
     
+    az_result rc;
     az_json_reader jr;
     uint32_t reported_value;
 
-    AZ_RETURN_IF_FAILED(az_json_reader_init(&jr, desired_payload, NULL));
-    AZ_RETURN_IF_FAILED(json_find_property(&jr, reported_property_name));
-    AZ_RETURN_IF_FAILED(az_json_token_get_uint32(&jr.token, &reported_value));
+    if (AZ_OK != (rc =az_json_reader_init(&jr, desired_payload, NULL)) ||
+        AZ_OK != (rc =json_find_property(&jr, reported_property_name)) ||
+        AZ_OK != (rc =az_json_token_get_uint32(&jr.token, &reported_value)))
+        return rc;
+
     publish_user->interval = reported_value;
     printf("Updating %.*s\" to %d\n", az_span_size(reported_property_name), az_span_ptr(reported_property_name), publish_user->interval);
 }
@@ -832,11 +852,12 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
 
     char work_area[256];
 
-    az_span in_topic = az_span_init((uint8_t*)published->topic_name, published->topic_name_size);
+    az_span in_topic = az_span_create((uint8_t*)published->topic_name, published->topic_name_size);
     az_iot_hub_client_c2d_request c2d_request;
     az_iot_hub_client_method_request method_request;
     az_iot_hub_client_twin_response twin_response;
-    az_pair out;
+    az_span key = AZ_SPAN_EMPTY;
+    az_span value = AZ_SPAN_EMPTY;
     az_result az_r;
     uint32_t out_value;
     int desired_interval;
@@ -846,26 +867,25 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     if (AZ_OK == az_iot_hub_client_c2d_parse_received_topic(publish_user->client, in_topic, &c2d_request))
     {
         printf("Received C2D message:\n");
-        out = AZ_PAIR_NULL;
 
-        while (AZ_OK == az_iot_hub_client_properties_next(&c2d_request.properties, &out))
+        while (AZ_OK == az_iot_message_properties_next(&c2d_request.properties, &key, &value))
         {
-            if (az_span_size(out.key) < sizeof(work_area) && az_span_size(out.value) < sizeof(work_area))
+            if (az_span_size(key) < sizeof(work_area) && az_span_size(value) < sizeof(work_area))
             {
-                az_span_to_str(work_area, sizeof(work_area), out.key);
+                az_span_to_str(work_area, sizeof(work_area), key);
                 url_decode_in_place(work_area);
                 printf("key=%s; ", work_area);
-                az_span_to_str(work_area, sizeof(work_area), out.value);
+                az_span_to_str(work_area, sizeof(work_area), value);
                 url_decode_in_place(work_area);
                 printf("value=%s\n", work_area);
             }
             else 
             {
-                print_az_span("Property too long to process - key: ", out.key);
-                print_az_span("                             value: ", out.value);
+                print_az_span("Property too long to process - key: ", key);
+                print_az_span("                             value: ", value);
             }
         }
-        print_az_span("Message: ", az_span_init((uint8_t *)published->application_message, published->application_message_size));
+        print_az_span("Message: ", az_span_create((uint8_t *)published->application_message, published->application_message_size));
     }
     else if (AZ_OK == az_iot_hub_client_methods_parse_received_topic(publish_user->client, in_topic, &method_request))
     {
@@ -877,7 +897,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
 
             printf("Received direct method to invoke %s\n", work_area);
 
-            az_span payload = az_span_init((uint8_t *)published->application_message, published->application_message_size);
+            az_span payload = az_span_create((uint8_t *)published->application_message, published->application_message_size);
 
             if (strcmp(work_area, "test") == 0)
             {
@@ -905,7 +925,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
     {
         switch (twin_response.response_type)
         {
-        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_GET:
+        case AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_TYPE_GET:
             print_array("Response type get: ", published->application_message, published->application_message_size);
             printf("Response status: %d\n", twin_response.status);
             print_az_span("Request Id: ", twin_response.request_id);
@@ -914,13 +934,13 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             {
                 az_json_reader jr;
 
-                if (!az_failed(az_json_reader_init(&jr, az_span_init((uint8_t *)published->application_message, published->application_message_size), NULL)))
+                if (AZ_OK == (az_json_reader_init(&jr, az_span_create((uint8_t *)published->application_message, published->application_message_size), NULL)))
                 {
                     az_span path = AZ_SPAN_LITERAL_FROM_STR("desired/interval");
 
-                    if (!az_failed(json_find_path(&jr, path)))
+                    if (AZ_OK == (json_find_path(&jr, path)))
                     {
-                        if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value) && out_value > 0 && out_value < 120))
+                        if (AZ_OK == (az_json_token_get_uint32(&jr.token, &out_value) && out_value > 0 && out_value < 120))
                         {
                             publish_user->interval = out_value;
                             report_property(publish_user);
@@ -932,13 +952,13 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
                     }
                     else
                     {
-                        if (!az_failed(az_json_reader_init(&jr, az_span_init((uint8_t *)published->application_message, published->application_message_size), NULL)))
+                        if (AZ_OK == (az_json_reader_init(&jr, az_span_create((uint8_t *)published->application_message, published->application_message_size), NULL)))
                         {
                             az_span path = AZ_SPAN_LITERAL_FROM_STR("reported/interval");
 
-                            if (!az_failed(json_find_path(&jr, path)))
+                            if (AZ_OK == (json_find_path(&jr, path)))
                             {
-                                if (!az_failed(az_json_token_get_uint32(&jr.token, &out_value)))
+                                if (AZ_OK == (az_json_token_get_uint32(&jr.token, &out_value)))
                                 {
                                     if (out_value == 0 || out_value > 120)
                                     {
@@ -962,7 +982,7 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             }
 
             break;
-        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_REPORTED_PROPERTIES:
+        case AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_TYPE_REPORTED_PROPERTIES:
             printf("Twin reported properties response\n");
 
             if (published->application_message_size == 0)
@@ -976,11 +996,11 @@ static void publish_callback(void** state, struct mqtt_response_publish *publish
             
             printf("Response status: %d\n", twin_response.status);
             break;
-        case AZ_IOT_CLIENT_TWIN_RESPONSE_TYPE_DESIRED_PROPERTIES:
+        case AZ_IOT_HUB_CLIENT_TWIN_RESPONSE_TYPE_DESIRED_PROPERTIES:
             print_array("Response type desired properties: ", published->application_message, published->application_message_size);
             printf("Response status: %d\n", twin_response.status);
             
-            if (az_failed(rc = update_property(publish_user, az_span_init((uint8_t *)published->application_message, published->application_message_size))))
+            if (AZ_OK != (rc = update_property(publish_user, az_span_create((uint8_t *)published->application_message, published->application_message_size))))
             {
                 printf("Failed to update property locally, az_result return code %04x\n", rc);
             }
@@ -1025,7 +1045,7 @@ static int request_twin(az_iot_hub_client *client, struct mqtt_client *mqttClien
     printf("Device requesting twin document from service.\n");
 
     // Get the topic to send a twin GET publish message to service.
-    if (az_failed(rc = az_iot_hub_client_twin_document_get_publish_topic(client, req_id, twin_topic, sizeof(twin_topic), NULL)))
+    if (AZ_OK != (rc = az_iot_hub_client_twin_document_get_publish_topic(client, req_id, twin_topic, sizeof(twin_topic), NULL)))
     {
         printf("Unable to get twin document publish topic, az_result return code %04x\n", rc);
         return rc;
@@ -1080,6 +1100,8 @@ static az_result get_password(az_iot_hub_client *client,
 
     rc = AZ_OK;
 
+    // expiryTime = 4600;
+
     if (AZ_OK != (rc = az_iot_hub_client_sas_get_signature(client, expiryTime, signature_span, &signature_span)))
     {
         printf("Failed to get string to sign for password - %d\n", rc);
@@ -1096,13 +1118,14 @@ static az_result get_password(az_iot_hub_client *client,
     {
         printf("Failed to Base64 encode the hash key: %d\n", rc);
     }
-    else if (AZ_OK != (rc = az_iot_hub_client_sas_get_password(client, 
-            encoded_data_span, 
-            expiryTime, 
-            AZ_SPAN_NULL, 
-            mqtt_password, 
-            mqtt_password_length, 
-            mqtt_password_out_length)))
+    else if (AZ_OK != (rc = az_iot_hub_client_sas_get_password(
+        client, 
+        expiryTime,
+        encoded_data_span, 
+        AZ_SPAN_EMPTY, 
+        mqtt_password, 
+        mqtt_password_length, 
+        mqtt_password_out_length)))
     {
         printf("Failed to generate password string: %d\n", rc);
     }
@@ -1149,14 +1172,29 @@ static void reconnect_callback(struct mqtt_client *mqttClient, void **reconnect_
 
     while (rc != 0)
     {
-        start = az_platform_clock_msec();
+        if (AZ_OK != az_platform_clock_msec(&start))
+        {
+            printf("Unable to acquire clock");
+            return;
+        }
         printf("Connection attempt %d\n", attempt + 1);
 
         if (0 != (rc = open_nb_socket(&config->ctx, az_span_ptr(config->hostname), az_span_ptr(config->port))))
         {
             if (rc == -1)
             {
-                az_platform_sleep_msec(az_iot_retry_calc_delay((int)(az_platform_clock_msec() - start), ++attempt, 1000, 20 * 60 * 1000, (rand() % 5000)));
+                int64_t now;
+                if (AZ_OK != az_platform_clock_msec(&now))
+                {
+                    printf("Unable to acquire clock");
+                    return;
+                }
+                if (AZ_OK != az_platform_sleep_msec(az_iot_calculate_retry_delay((int)(now - start), ++attempt, 1000, 20 * 60 * 1000, (rand() % 5000))))
+                {
+                    printf("Failed to sleep");
+                    return;
+                }
+
             }
             else
             {
@@ -1253,7 +1291,7 @@ int main()
     az_precondition_failed_set_callback(precondition_failure_callback);
 
     // Read the configuration from the environment
-    if (az_failed(rc = read_configuration_and_init_client(&config)))
+    if (AZ_OK != (rc = read_configuration_and_init_client(&config)))
     {
         printf("Failed to read configuration variables - %d\n", rc);
         return rc;
@@ -1267,17 +1305,18 @@ int main()
     }
 
     az_heap_free(hHeap, config.trusted_root_cert_filename);
-    config.trusted_root_cert_filename = AZ_SPAN_NULL;
+    config.trusted_root_cert_filename = AZ_SPAN_EMPTY;
 
     // Parse the connection string
-    if (az_failed(rc = split_connection_string(&config)))
+    if (AZ_OK != (rc = split_connection_string(&config)))
     {
         printf("Failed to parse connection string - make sure it is a device connection string - %d\n", rc);
         return rc;
     }
 
+    // The connection string will never be used again
     az_heap_free(hHeap, config.connection_string);
-    config.connection_string = AZ_SPAN_NULL;
+    config.connection_string = AZ_SPAN_EMPTY;
 
     if (config.using_X509 == true)
     {
@@ -1301,9 +1340,9 @@ int main()
             }
 
             az_heap_free(hHeap, config.x509Key_filename);
-            config.x509Key_filename = AZ_SPAN_NULL;
+            config.x509Key_filename = AZ_SPAN_EMPTY;
             az_heap_free(hHeap, config.x509_cert_filename);
-            config.x509_cert_filename = AZ_SPAN_NULL;
+            config.x509_cert_filename = AZ_SPAN_EMPTY;
         }
     }
     else
@@ -1322,7 +1361,7 @@ int main()
     }
 
     az_heap_free(hHeap, config.device_id);
-    config.device_id = AZ_SPAN_NULL;
+    config.device_id = AZ_SPAN_EMPTY;
 
     size_t outLength;
 
@@ -1365,7 +1404,7 @@ int main()
     }
     else
     {
-        config.decoded_SAK = AZ_SPAN_NULL;
+        config.decoded_SAK = AZ_SPAN_EMPTY;
     }
     
 
@@ -1388,7 +1427,7 @@ int main()
     printf("\t         Topic: %s\n", mqtt_topic);
 
     // Optionally set up a logger
-    az_log_set_callback(log_func);
+    az_log_set_message_callback(log_func);
 
     // Initialize the TLS library
     if (0 != initialize_TLS(&config.ctx, config.x509_cert, config.x509_cert_count, config.x509pk, bearssl_iobuf, BR_SSL_BUFSIZE_BIDI))
@@ -1431,7 +1470,12 @@ int main()
     while (!initial_twin_complete)
     {
         mqtt_sync(&mqtt_client);
-        az_platform_sleep_msec(100);
+        if (AZ_OK != (rc = az_platform_sleep_msec(100)))
+        {
+            printf("Failed to sleep");
+            return rc;
+        }
+
     }
 
     print_heap_info();
@@ -1461,7 +1505,11 @@ int main()
 
         // Push and pull the data
         mqtt_sync(&mqtt_client);
-        az_platform_sleep_msec(100);
+        if (AZ_OK != (rc = az_platform_sleep_msec(100)))
+        {
+            printf("Failed to sleep");
+            return rc;
+        }
     }
 
     printf("Cancel requested - exiting\n");

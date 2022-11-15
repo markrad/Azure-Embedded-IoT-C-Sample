@@ -19,7 +19,10 @@ az_result az_decode_base64(az_span source, az_span destination, az_span *out_val
         requiredLen--;
     }
 
-    AZ_RETURN_IF_NOT_ENOUGH_SIZE(destination, requiredLen);
+	if (az_span_size(destination) < requiredLen)
+	{
+		return AZ_ERROR_NOT_ENOUGH_SPACE;
+	}
 
     uint8_t *input = az_span_ptr(source);
     uint8_t *output = az_span_ptr(destination);
